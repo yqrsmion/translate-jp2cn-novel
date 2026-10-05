@@ -1,0 +1,23 @@
+# 小说正文与译文：受版权保护，不得入库
+*.txt
+*.zh.md
+*.zh.txt
+
+# 翻译过程产物（属于使用者的工作目录，不属于 skill）
+parts/
+output/
+work/
+archive/
+manifest.json
+state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
