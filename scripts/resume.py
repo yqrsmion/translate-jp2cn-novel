@@ -40,13 +40,18 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
-from _paths import ROOT, SOURCE  # noqa: E402  ROOT 由源文档位置推导
-
-MANIFEST_PATH = ROOT / "manifest.json"
-STATE_PATH = ROOT / "state.json"
-OUTPUT_DIR = ROOT / "output"
-INCOMING_DIR = OUTPUT_DIR / ".incoming"
-ARCHIVE_DIR = ROOT / "archive"
+from _paths import (  # noqa: E402  ROOT 由源文档位置推导
+    ROOT,
+    SOURCE,
+    MANIFEST_PATH,
+    STATE_PATH,
+    TRANSLATE_DIR,
+    PARTS_OUT_DIR,
+    OUT_TXT_PATH,
+    INCOMING_DIR,
+    ARCHIVE_DIR,
+    WORK_DIR,
+)
 
 STATE_SCHEMA = "novel-translate-state"
 STATE_SCHEMA_VERSION = "1.0"
@@ -147,10 +152,9 @@ def check_binding(state: dict, manifest: dict) -> list[str]:
 
 
 def ensure_work_files() -> None:
-    work_dir = ROOT / "work"
-    work_dir.mkdir(parents=True, exist_ok=True)
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
     for name, header in WORK_FILES.items():
-        p = work_dir / name
+        p = WORK_DIR / name
         if not p.exists():
             p.write_text(header, encoding="utf-8")
 
@@ -180,11 +184,12 @@ def stray_files() -> list[str]:
     if INCOMING_DIR.exists():
         for f in sorted(INCOMING_DIR.iterdir()):
             found.append(f"incoming: {f.relative_to(ROOT).as_posix()} ({f.stat().st_size} B)")
-    if OUTPUT_DIR.exists():
-        for f in sorted(OUTPUT_DIR.iterdir()):
+    if PARTS_OUT_DIR.exists():
+        for f in sorted(PARTS_OUT_DIR.iterdir()):
             if f.is_file() and f.name.endswith(".tmp"):
                 found.append(f"stray tmp: {f.relative_to(ROOT).as_posix()}")
-    for probe in (ROOT / "manifest.json.tmp", ROOT / "state.json.tmp", ROOT / "translated.txt.tmp"):
+    for probe in (TRANSLATE_DIR / "manifest.json.tmp", TRANSLATE_DIR / "state.json.tmp",
+                  OUT_TXT_PATH.with_suffix(".txt.tmp")):
         if probe.exists():
             found.append(f"stray tmp: {probe.name}")
     for pat in ("gap_*", "debug_*", "temp_*", "test_*"):
@@ -221,7 +226,7 @@ def cmd_init(args) -> int:
                 "started_at": None,
                 "finished_at": None,
                 "input_sha256": p["sha256"],
-                "output_file": f"output/{p['part_id']}.txt",
+                "output_file": f".translate/parts_out/{p['part_id']}.txt",
                 "output_sha256": None,
                 "output_char_count": None,
                 "text_units": None,
@@ -244,7 +249,7 @@ def cmd_init(args) -> int:
     ensure_work_files()
     print(f"state.json 已创建：{manifest['part_count']} 个 part，全部 PENDING")
     print(f"current_part_id = {state['current_part_id']}")
-    print("work/ 知识库骨架已就绪：" + ", ".join(WORK_FILES))
+    print("翻译辅助上下文骨架已就绪：" + ", ".join(WORK_FILES))
     return 0
 
 
@@ -279,7 +284,7 @@ def cmd_status(args) -> int:
     for p in manifest["parts"]:
         pid = p["part_id"]
         s = state["parts"].get(pid, {})
-        op = OUTPUT_DIR / f"{pid}.txt"
+        op = PARTS_OUT_DIR / f"{pid}.txt"
         size = op.stat().st_size if op.exists() else 0
         ratio = s.get("ratio")
         v = (s.get("verify") or {}).get("level", "-")
@@ -294,7 +299,7 @@ def cmd_status(args) -> int:
         print("[IN_PROGRESS 需处理]")
         for pid in hanging:
             s = state["parts"][pid]
-            op = OUTPUT_DIR / f"{pid}.txt"
+            op = PARTS_OUT_DIR / f"{pid}.txt"
             inc = INCOMING_DIR / f"{pid}.txt"
             age = ""
             hb = s.get("claim", {}).get("heartbeat")
@@ -307,7 +312,7 @@ def cmd_status(args) -> int:
             if op.exists():
                 print(f"  {pid}: 译文已落盘，请人工核对后 `resume.py settle --part {pid} --i-know`{age}")
             elif inc.exists():
-                print(f"  {pid}: 仅发现暂存草稿 output/.incoming/{pid}.txt；"
+                print(f"  {pid}: 仅发现暂存草稿 .translate/incoming/{pid}.txt；"
                       f"人工确认后可 `resume.py incoming --discard {pid}` 再重跑{age}")
             else:
                 print(f"  {pid}: 无任何产物，可安全重跑该 part（attempts={s.get('attempts')}）{age}")
@@ -366,7 +371,7 @@ def cmd_audit(args) -> int:
         pid = p["part_id"]
         if pid not in texts:
             continue
-        opath = OUTPUT_DIR / f"{pid}.txt"
+        opath = PARTS_OUT_DIR / f"{pid}.txt"
         if not opath.exists():
             continue
         _, out_text = verify.read_text_bytes(opath)
@@ -398,7 +403,7 @@ def cmd_settle(args) -> int:
         print(f"INFO: {pid} 当前状态为 {s.get('status')}，无需 settle")
         return 0
 
-    opath = OUTPUT_DIR / f"{pid}.txt"
+    opath = PARTS_OUT_DIR / f"{pid}.txt"
     if not opath.exists():
         print(f"FATAL: {pid} 没有落盘译文，不能 settle（禁止凭空判定完成）")
         return 2
@@ -466,9 +471,9 @@ def cmd_reset(args) -> int:
         print(f"FATAL: state 中无 {args.part}")
         return 2
     if not args.i_know:
-        print("reset 会把该 part 退回 PENDING 并把旧译文移入 archive/，请确认后加 --i-know")
+        print("reset 会把该 part 退回 PENDING 并把旧译文移入 .translate/archive/，请确认后加 --i-know")
         return 1
-    opath = OUTPUT_DIR / f"{args.part}.txt"
+    opath = PARTS_OUT_DIR / f"{args.part}.txt"
     if opath.exists():
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d-%H%M%S")
@@ -498,11 +503,11 @@ def cmd_reset(args) -> int:
 
 def cmd_incoming(args) -> int:
     if not INCOMING_DIR.exists():
-        print("output/.incoming/ 不存在，无暂存草稿")
+        print(".translate/incoming/ 不存在，无暂存草稿")
         return 0
     items = sorted(INCOMING_DIR.iterdir())
     if not items:
-        print("output/.incoming/ 为空")
+        print(".translate/incoming/ 为空")
         return 0
     print("暂存草稿：")
     for f in items:

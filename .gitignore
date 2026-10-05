@@ -1,15 +1,11 @@
-# 小说正文与译文：受版权保护，不得入库
-*.txt
-*.zh.md
-*.zh.txt
+# 翻译工作区：属于具体小说，不属于 Skill
+.translate/
 
-# 翻译过程产物（属于使用者的工作目录，不属于 skill）
-parts/
-output/
-work/
-archive/
-manifest.json
-state.json
+# 最终译文：属于使用者，不入仓
+*_translate.txt
+
+# 小说正文：受版权保护，不得入仓
+*.txt
 
 # Python
 __pycache__/

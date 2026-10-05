@@ -22,8 +22,8 @@ B. 全局：日文直角引号 「」 -> 中文弯引号 “”
 用法
 ----
     python scripts/fix_quotes.py             # dry-run，只报告
-    python scripts/fix_quotes.py --apply     # 写回 output/ 并刷新 state.json 的 sha256
-                                             # （随后需重跑 merge.py 与 export_md.py）
+    python scripts/fix_quotes.py --apply     # 写回 .translate/parts_out/ 并刷新 state.json
+                                             # （随后需重跑 merge.py）
 """
 
 from __future__ import annotations
@@ -37,12 +37,14 @@ from pathlib import Path
 
 # ROOT 由【源文档位置】推导，而非脚本位置（详见 _paths.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import ROOT, SOURCE  # noqa: E402
-
-MANIFEST = ROOT / "manifest.json"
-ORIGINAL = SOURCE
-OUTPUT_DIR = ROOT / "output"
-STATE = ROOT / "state.json"
+from _paths import (  # noqa: E402
+    ROOT,
+    SOURCE,
+    ORIGINAL_PATH,
+    MANIFEST_PATH,
+    STATE_PATH,
+    PARTS_OUT_DIR,
+)
 
 L_NIJU, R_NIJU = "\u300e", "\u300f"   # 『 』
 L_KAK, R_KAK = "\u300c", "\u300d"     # 「 」
@@ -75,9 +77,9 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="写回文件（默认 dry-run）")
     args = ap.parse_args()
 
-    mf = json.loads(read_text(MANIFEST))
-    orig = read_text(ORIGINAL)
-    state = json.loads(read_text(STATE))
+    mf = json.loads(read_text(MANIFEST_PATH))
+    orig = read_text(ORIGINAL_PATH)
+    state = json.loads(read_text(STATE_PATH))
 
     n_total = 0        # 含『』的原文段落
     n_nested = 0       # 『』 -> ‘’
@@ -87,7 +89,7 @@ def main() -> int:
 
     for prec in mf["parts"]:
         pid = prec["part_id"]
-        opath = OUTPUT_DIR / f"{pid}.txt"
+        opath = PARTS_OUT_DIR / f"{pid}.txt"
         lines = read_text(opath).split("\n")
         idxs = [i for i, l in enumerate(lines) if l.strip()]
         paras = prec["paragraphs"]
@@ -148,11 +150,11 @@ def main() -> int:
         print("  NEW:", new)
 
     if args.apply:
-        STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
                          encoding="utf-8")
         print("-" * 72)
-        print("已写回 output/ 并刷新 state.json 的 output_sha256")
-        print("下一步：python scripts/merge.py  &&  python scripts/export_md.py")
+        print("已写回 .translate/parts_out/ 并刷新 state.json 的 output_sha256")
+        print("下一步：python scripts/merge.py")
     else:
         print("-" * 72)
         print("(dry-run，未写入任何文件)")

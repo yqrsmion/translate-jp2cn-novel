@@ -48,12 +48,14 @@ from pathlib import Path
 
 # ROOT 由【源文档位置】推导，而非脚本位置（详见 _paths.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import ROOT, SOURCE  # noqa: E402
-
-ORIGINAL_PATH = SOURCE
-MANIFEST_PATH = ROOT / "manifest.json"
-STATE_PATH = ROOT / "state.json"
-OUTPUT_DIR = ROOT / "output"
+from _paths import (  # noqa: E402
+    ROOT,
+    SOURCE,
+    ORIGINAL_PATH,
+    MANIFEST_PATH,
+    STATE_PATH,
+    PARTS_OUT_DIR,
+)
 
 HARD_MAX = 20000
 TARGET_MAX = 15000
@@ -201,7 +203,7 @@ class Report:
 # --------------------------------------------------------------------------
 def verify_source(rep: Report, manifest: dict) -> None:
     if not ORIGINAL_PATH.exists():
-        rep.add(FAIL, "V1", "original.txt 不存在")
+        rep.add(FAIL, "V1", "源文档不存在")
         return
     data, text = read_text_bytes(ORIGINAL_PATH)
     src = manifest.get("source", {})
@@ -690,7 +692,7 @@ def cmd_part(args) -> int:
             rep.add(FAIL, "V3", "原文 part 缺失", pid)
             continue
         _, part_text = read_text_bytes(ppath)
-        opath = OUTPUT_DIR / f"{pid}.txt"
+        opath = PARTS_OUT_DIR / f"{pid}.txt"
         if not opath.exists():
             rep.add(WARN, "V9", f"尚无译文 {opath.name}", pid)
             continue
@@ -745,7 +747,7 @@ def cmd_all(args) -> int:
         pid = p["part_id"]
         if pid not in texts:
             continue
-        opath = OUTPUT_DIR / f"{pid}.txt"
+        opath = PARTS_OUT_DIR / f"{pid}.txt"
         if not opath.exists():
             continue
         _, out_text = read_text_bytes(opath)
@@ -764,7 +766,7 @@ def cmd_calibrate(args) -> int:
     ratios = []
     for p in mf["parts"]:
         ppath = ROOT / p["file"]
-        opath = OUTPUT_DIR / f"{p['part_id']}.txt"
+        opath = PARTS_OUT_DIR / f"{p['part_id']}.txt"
         if not (ppath.exists() and opath.exists()):
             continue
         _, ptext = read_text_bytes(ppath)
@@ -813,7 +815,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="完整性与逐段结构校验")
     ap.add_argument("--source", metavar="PATH", help="源文档路径（默认按 _paths.py 优先级定位）")
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--source", action="store_true", help="只校验 原文/manifest/parts（V1–V8）")
+    g.add_argument("--source-only", action="store_true", help="只校验 原文/manifest/parts（V1–V8）")
     g.add_argument("--part", nargs="*", metavar="PART_ID", help="校验指定 part 的译文（V9–V12）")
     g.add_argument("--all", action="store_true", help="全部校验")
     g.add_argument("--calibrate", action="store_true", help="校准 ratio 告警区间")
@@ -821,7 +823,7 @@ def main() -> int:
     ap.add_argument("--write-state", action="store_true", help="把校验结果写回 state.json")
     args = ap.parse_args()
 
-    if args.source:
+    if args.source_only:
         return cmd_source(args)
     if args.all:
         return cmd_all(args)

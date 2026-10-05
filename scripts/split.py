@@ -8,8 +8,8 @@ split.py —— 一次性切分【源文档】-> parts/part_XXX.txt + manifest.j
 
 设计要点
 --------
-1. original.txt 是唯一权威数据源，本脚本绝不修改它。
-2. part 是 original.txt 的**纯字符切片** part = T[start:end]，不做任何字符规整、
+1. 源文档是唯一权威数据源，本脚本绝不修改它。
+2. part 是源文档的**纯字符切片** part = T[start:end]，不做任何字符规整、
    不改换行（LF 保持 LF）。
 3. 所有权规则：某行末尾的换行连续段归属于**前一个** part（owner = preceding）。
    因此 concat(part_texts) == original.txt 与 sum(char_count) == len(T) 无条件严格成立。
@@ -73,11 +73,7 @@ LVL_PARA = 1
 
 # ROOT 由【源文档位置】推导，而非脚本位置（详见 _paths.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import ROOT, SOURCE  # noqa: E402
-
-ORIGINAL_PATH = SOURCE
-PARTS_DIRNAME = "parts"
-MANIFEST_PATH = ROOT / "manifest.json"
+from _paths import ROOT, SOURCE, ORIGINAL_PATH, PARTS_DIRNAME, MANIFEST_PATH  # noqa: E402
 
 SENTENCE_END_RE = re.compile(r"[。．！？!?」』”)］】〉》…‥]")
 PART_RE = re.compile(r"^第[一二三四五六七八九十]+部$")

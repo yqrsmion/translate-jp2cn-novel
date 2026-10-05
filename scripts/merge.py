@@ -17,7 +17,7 @@ merge.py —— 全部 part 为 DONE 后，严格按 manifest 顺序合并生成
 ----
     python scripts/merge.py
     python scripts/merge.py --strict        # 存在 needs_human_review 的 part 也拒绝合并
-    python scripts/merge.py --check         # 只校验现有 translated.txt，不重写
+    python scripts/merge.py --check         # 只校验现有最终译文，不重写
 """
 
 from __future__ import annotations
@@ -31,12 +31,14 @@ from pathlib import Path
 
 # ROOT 由【源文档位置】推导，而非脚本位置（详见 _paths.py）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import ROOT, SOURCE, OUT_TXT_NAME  # noqa: E402
-
-MANIFEST_PATH = ROOT / "manifest.json"
-STATE_PATH = ROOT / "state.json"
-OUTPUT_DIR = ROOT / "output"
-TRANSLATED_PATH = ROOT / OUT_TXT_NAME   # 输出名以源文档名为准
+from _paths import (  # noqa: E402
+    ROOT,
+    SOURCE,
+    MANIFEST_PATH,
+    STATE_PATH,
+    PARTS_OUT_DIR,
+    OUT_TXT_PATH,
+)
 
 
 def setup_io() -> None:
@@ -96,7 +98,7 @@ def precheck(manifest: dict, state: dict, strict: bool) -> list[str]:
 
     for p in manifest["parts"]:
         pid = p["part_id"]
-        op = OUTPUT_DIR / f"{pid}.txt"
+        op = PARTS_OUT_DIR / f"{pid}.txt"
         if not op.exists():
             errs.append(f"缺少译文 {op.name}")
             continue
@@ -118,7 +120,7 @@ def build_translated(manifest: dict) -> tuple[str, dict]:
     per_part = []
     for p in manifest["parts"]:
         pid = p["part_id"]
-        op = OUTPUT_DIR / f"{pid}.txt"
+        op = PARTS_OUT_DIR / f"{pid}.txt"
         lines = [ln.strip() for ln in read_text(op).split("\n") if ln.strip()]
         paras = p.get("paragraphs", [])
         if len(lines) != len(paras):
@@ -158,13 +160,13 @@ def main() -> int:
     manifest = load_json(MANIFEST_PATH)
     state = load_json(STATE_PATH)
 
-    if TRANSLATED_PATH.exists() and args.check:
+    if OUT_TXT_PATH.exists() and args.check:
         text, stats = build_translated(manifest)
-        cur = TRANSLATED_PATH.read_bytes()
+        cur = OUT_TXT_PATH.read_bytes()
         exp = text.encode("utf-8")
         print("=" * 68)
         print(f"check result: {'IDENTICAL' if cur == exp else 'DIFFERENT'}")
-        print(f"  translated.txt sha256 : {sha256_bytes(cur)}")
+        print(f"  最终译文 sha256 : {sha256_bytes(cur)}")
         print(f"  expected      sha256 : {sha256_bytes(exp)}")
         print(f"  units={stats['units']} ratio={stats['ratio']} (仅供参考，不代表完整)")
         print("=" * 68)
@@ -181,10 +183,10 @@ def main() -> int:
 
     text, stats = build_translated(manifest)
     data = text.encode("utf-8")
-    write_bytes_atomic(TRANSLATED_PATH, data)
+    write_bytes_atomic(OUT_TXT_PATH, data)
 
     print("=" * 68)
-    print(f"merged -> {TRANSLATED_PATH}  ({len(data)} bytes)")
+    print(f"merged -> {OUT_TXT_PATH}  ({len(data)} bytes)")
     print(f"  units={stats['units']}  source_chars={stats['source_chars']}  "
           f"translated_chars={stats['translated_chars']}")
     print(f"  ratio={stats['ratio']}（仅参考，字符比例不能证明翻译完整）")

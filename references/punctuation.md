@@ -32,7 +32,7 @@
 
 ## 自动化
 
-`scripts/fix_quotes.py` 依据 `manifest.json` 的「原文段落 ↔ 译文行」1:1 对齐，
+`scripts/fix_quotes.py` 依据 `.translate/manifest.json` 的「原文段落 ↔ 译文行」1:1 对齐，
 逐段精确定位并统一，不靠正则猜。支持 `--apply`（默认 dry-run）。
 
 ## 常见坑

@@ -1,147 +1,174 @@
 ---
 name: translate-jp2cn-novel
-description: "将日文小说完整翻译为简体中文（JP→CN / 日译中）。适用于长篇日文小说的分块翻译、跨块一致性维护、完整性校验与合并导出。当用户要求翻译日文小说、日文长篇、日文书籍，或把日文长文本完整译成中文时使用。"
+description: "将日文小说完整翻译为简体中文（JP→CN / 日译中）。适用于长篇日文小说的分块串行翻译、跨块一致性维护、结构完整性校验与确定性合并。当用户要求翻译日文小说、日文长篇、日文书籍，或把日文长文本完整译成中文时使用。"
 ---
 
 # 翻译日文小说（日 → 中简体）
 
-把整本日文小说切成小块，**串行**逐块翻译，全程用程序保证不漏译、不乱序、可恢复，
-最后确定性合并为简体中文正文 + 阅读版 Markdown。
+> **本文回答**：Agent 使用这个 Skill 时，该怎么完成一次翻译（调用什么、按什么顺序、失败怎么办）。
+> **本文不回答**：翻译本身的行为准则（→ [`AGENTS.md`](AGENTS.md)）、系统内部如何实现（→ [`docs/architecture.md`](docs/architecture.md)）。
 
-这套流程已在真实项目上完整跑通：23 万字、4595 段落、23 个 part，零漏译。
+把一本日文小说切成小块，**串行**逐块翻译，用脚本保证不漏译、不乱序、可恢复，
+最后确定性合并为一部简体中文译文。
 
 ## 何时使用
 
 - 用户要求翻译一本日文小说 / 日文长篇 / 日文书籍
 - 需要把日文长文本**完整**（而非摘要、非节选）译成简体中文
 
-## 铁律（绝不可破坏）
+## 领域边界
 
-1. **1:1 段落对齐**：每个非空行 = 一个段落，译文行数必须严格等于原文段落数
-2. **切分不破段落**：只在空行 / 句末边界切，绝不切断段落
-3. **版式程序化重建**：段落间换行由 `manifest.sep_newlines` 决定，不依赖模型保留空行
-4. **完成判定外部化**：仅当 `state.json` 全部 DONE 才算完成，模型绝不自行判断"翻完了"
+面向**日文长篇小说的整本翻译**。不做短句翻译，不做多语言互译，不做译后润色出版。
 
-## 源文档定位（不写死文件名）
+## 输入与输出
 
-优先级：
+| | 内容 |
+| --- | --- |
+| **输入** | 一个日文 `.txt` 源文档（路径不写死，按优先级定位） |
+| **最终产物** | `<原名>_translate.txt`，与源文档**同一级目录** |
+| **中间产物** | `<源目录>/.translate/`（parts / parts_out / work / incoming / archive / manifest.json / state.json） |
 
-1. 用户在提示词中显式指定的文档 —— 由你通过 `--source` 传入（最高优先级）
-2. `--source <路径>`
-3. 环境变量 `NOVEL_SOURCE`
-4. 工作目录下**唯一的** `*.txt`
-5. 存在多个 `*.txt` → **停止并请用户指定，绝不猜测**
+产物**永远落在源文档所在目录**，Skill 目录不保存任何小说状态。
 
-`ROOT` = 源文档所在目录。所有产物（`parts/`、`output/`、`work/`、
-`manifest.json`、`state.json`、`<原名>.zh.txt`、`<原名>.zh.md`）都落在 ROOT 下。
+## 铁律
 
-## SOP
+1. **1:1 段落对齐** —— 每个非空原文行对应一个译文段落，不增不减
+2. **切分不破坏段落** —— 只在空行 / 章节 / 句末等安全边界切
+3. **版式程序化重建** —— 段落间空行由 manifest 中的结构信息控制，不依赖模型保留
+4. **完成判定外部化** —— 全部 part 为 `DONE` 才算完成，模型绝不自行判断"翻完了"
 
-> 下文 `<S>` 代表本 skill 的 `scripts/` 目录路径。
+---
 
-**0. 准备**
+## 执行流程
 
-读 `AGENTS.md`（完整工作规范）。若为推理小说，额外读 `references/genre-mystery.md`。
+下文 `<S>` = 本 Skill 的 `scripts/` 目录，`<X>` = 源文档路径。
 
-**1. 切分（只做一次）**
-
-```
-python <S>/split.py --source <源文档> --plan    # 建议先干跑看计划
-python <S>/split.py --source <源文档>
+```text
+Preflight → Split → Init → Translate（串行循环）→ 标点规范化 → Merge
 ```
 
-生成 `parts/` 与 `manifest.json`。禁止重复切分；出错则删除 `parts/` 重来。
+### 阶段 1：Preflight
 
-**2. 初始化**
+- **输入**：用户指定的源文档
+- **操作**：读 [`AGENTS.md`](AGENTS.md)；用 `--source <X>` 显式指定源文档
+- **通过条件**：源文档唯一且存在
+- **失败**：目录下多个 `*.txt` → 停止并请用户指定
+- **重复执行**：无副作用
 
-```
-python <S>/resume.py --source <源文档> init
-```
+### 阶段 2：Split（只做一次）
 
-生成 `state.json` 与 `work/` 知识库骨架。
-
-**3. 逐 part 翻译（串行循环，直到 ALL_DONE）**
-
-```
-python <S>/resume.py --source <源文档> next
-python <S>/run_agent.py --source <源文档> --print-prompt
+```bash
+python <S>/split.py --source <X> --plan    # 干跑，先看计划
+python <S>/split.py --source <X>
 ```
 
-把译文写入 `output/<part_id>.txt`（**一行对一段，行数必须与原文一致**），然后：
+- **输出**：`.translate/parts/part_XXX.txt` + `.translate/manifest.json`
+- **通过条件**：内置 self-check（V4 连续性 / V5 总长 / V6 重建 / V7 尺寸）通过
+- **失败**：切分出错 → 删除整个 `.translate/parts/` 后重跑，禁止追加切分
+- **重复执行**：`parts/` 已存在时不要重跑
 
-```
-python <S>/run_agent.py --source <源文档> --part <part_id> --commit
-```
+### 阶段 3：Init
 
-**4. 审计（随时可做）**
-
-```
-python <S>/resume.py --source <源文档> audit
-python <S>/resume.py --source <源文档> status
+```bash
+python <S>/resume.py --source <X> init
 ```
 
-**5. 合并（全部 DONE 后）**
+- **输出**：`.translate/state.json` + `.translate/work/` 骨架（7 个文件）
+- **失败**：`state.json` 已存在 → 脚本拒绝；需重建时加 `--rebuild`（**不删除任何译文**）
+- **重复执行**：幂等，已存在即拒绝
 
-```
-python <S>/merge.py --source <源文档>
-```
+### 阶段 4：Translate（串行循环，直到 ALL_DONE）
 
-产出 `<原名>.zh.txt`。
-
-**6. 标点规范化（可选）**
-
-```
-python <S>/fix_quotes.py --source <源文档>            # dry-run
-python <S>/fix_quotes.py --source <源文档> --apply
+```bash
+python <S>/resume.py --source <X> next                  # 取当前 part_id
+python <S>/run_agent.py --source <X> --print-prompt     # 组装 prompt（注入相关 work/ 条目 + 前一片尾部）
+#   把译文写入 .translate/parts_out/<part_id>.txt（一行一段，行数与原文一致）
+python <S>/run_agent.py --source <X> --part <part_id> --commit
 ```
 
-**7. 导出阅读版 Markdown**
+- **输入**：`part_id` + part 原文 + 相关 `work/` 片段（脚本注入）
+- **输出**：`.translate/parts_out/part_XXX.txt`
+- **通过条件**：`--commit` 内置 V9–V12 校验通过
+- **失败**：校验不通过 → 修正译文后重新 `--commit`；不跳过、不并行、不逆序
+- **重复执行**：同一 part 需重译时先走恢复流程（`reset`）
 
+输出格式：仅译文文本，**禁止**包含元数据、解释、进度标记、章节标题、空行。
+
+配了 `NOVEL_LLM_*` 环境变量时，`run_agent.py` 会自动调用 LLM；
+未配置则用 `--print-prompt` 由你自行翻译再 `--commit`。
+
+### 阶段 5：标点规范化（可选）
+
+```bash
+python <S>/fix_quotes.py --source <X>            # dry-run
+python <S>/fix_quotes.py --source <X> --apply
 ```
-python <S>/export_md.py --source <源文档> --inspect   # 先看标题结构对不对
-python <S>/export_md.py --source <源文档>
+
+**必须在 Merge 之前执行**：它只改 `.translate/parts_out/` 与 `state.json` 中的 sha256，
+合并之后再跑，最终译文不会更新且不报错。
+
+映射规则见 [`references/punctuation.md`](references/punctuation.md)。
+
+### 阶段 6：Merge
+
+```bash
+python <S>/merge.py --source <X> --check     # 先只校验，不重写
+python <S>/merge.py --source <X> [--strict]
 ```
 
-产出 `<原名>.zh.md`。
+- **输出**：`<原名>_translate.txt`
+- **通过条件**：全部 part 为 `DONE`；`--strict` 下不存在 `needs_human_review` 的 part
+- **失败**：有未完成 part → 回到阶段 4；有待复核 part → 人工确认后 `settle`
+- **重复执行**：幂等（`--check` 会报告 IDENTICAL / DIFFERENT）
 
-## 崩溃恢复
+---
 
-`resume.py status` 会诊断悬挂状态并给出处置建议：
+## 翻译辅助上下文（`work/`）
 
-- `settle --part X --i-know`：人工确认后把已完成译文置 DONE
-- `unlock --part X`：清除过期 claim
-- `reset --part X --i-know`：退回 PENDING 重译（旧译文自动归档到 `archive/`）
+`work/` 位于 `.translate/work/`，是跨 part 的翻译辅助上下文（人物 / 术语 / 地点 / 关系 /
+时间线 / 事实 / 冲突）。脚本会按关键词把**相关**条目注入每个 part，不会全量注入。
 
-## 跨块一致性
+- 记录模板见 [`references/knowledge-base.md`](references/knowledge-base.md)
+- 使用与冲突处理规则见 [`AGENTS.md`](AGENTS.md)
 
-`work/` 是长期知识库（人物 / 术语 / 地点 / 关系 / 时间线 / 事实 / 冲突）。
-`run_agent.py` 会自动把**与本 part 相关**的条目注入 prompt，并附带前一片译文尾部。
+## 失败与恢复
 
-你只需在每 part 翻译后，把新发现的**客观事实**追加进 `work/`。
-发现与已有条目冲突时，记入 `work/conflicts.md` 并**暂停等人工确认**，不要自动改。
+先诊断，再按情况处置：
 
-## 标点映射
+```bash
+python <S>/resume.py --source <X> status
+```
 
-见 `references/punctuation.md`。
-日文符号体系比中文丰富，映射不当会丢掉"对话 vs 广播/引用"的层级区分。
+| 情况 | 命令 |
+| --- | --- |
+| 译文已完整但状态悬挂 | `resume.py --source <X> settle --part P --i-know [--reason "..."]` |
+| claim 残留，需重跑该 part | `resume.py --source <X> unlock --part P` |
+| 需重译某 part | `resume.py --source <X> reset --part P --i-know`（旧译文进 `.translate/archive/`） |
+| `.translate/incoming/` 有残留草稿 | `resume.py --source <X> incoming --discard P --i-know` |
+| `state.json` 损坏 | `resume.py --source <X> init --rebuild`（不删除译文） |
 
-## 可选：推理小说
+补充命令：`resume.py --source <X> audit`（全量校验）。
 
-见 `references/genre-mystery.md` —— 核心是**禁止剧透的措辞护栏**。
+**原则**：失败的 part 不自动跳过；挂起的 part 必须人工确认后才能置为 DONE。
+
+## 工作区清理
+
+中间态默认保留。当你只需要成品时，**直接删除 `.translate/` 目录**即可：
+
+- 只删工作区，不影响源文档与最终译文
+- 删除后无法再断点恢复、重新合并或重新校验（均依赖 `manifest.json`）
 
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `NOVEL_SOURCE` | — | 源文档路径 |
-| `NOVEL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — | LLM 接口；不配则用 `--print-prompt` 由你自己翻译 |
+| `NOVEL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — | LLM 接口；不配则用 `--print-prompt` 自行翻译 |
 | `NOVEL_LLM_TEMPERATURE` | 0.2 | 采样温度 |
 | `NOVEL_CONTEXT_BUDGET` | 8000 | `work/` 注入上下文上限（字符） |
-| `NOVEL_TARGET_MIN` / `_MAX` / `NOVEL_HARD_MAX` / `NOVEL_MIN_PART` | 8000 / 15000 / 20000 / 2000 | 切分尺寸 |
+| `NOVEL_TARGET_MIN` / `_MAX` | 8000 / 15000 | 切分目标尺寸 |
+| `NOVEL_HARD_MAX` / `NOVEL_MIN_PART` | 20000 / 2000 | 硬上限 / 碎片下限 |
 | `NOVEL_CALL_TIMEOUT` | 900 | 单次 LLM 调用超时（秒） |
-| `NOVEL_PREV_TRANS_TAIL` / `_RAW_TAIL` | 1200 / 600 | 前一片尾部注入长度 |
+| `NOVEL_PREV_TRANS_TAIL` / `_RAW_TAIL` | 1200 / 600 | 前一片译文 / 原文尾部注入长度 |
 
-## 注意
-
-`resume.py` 使用子命令，`--source` 是顶层参数，须写在子命令之前：
-`resume.py --source X status`（而非 `resume.py status --source X`）。
+运行参数一律走环境变量，本 Skill **不读取任何配置文件**。

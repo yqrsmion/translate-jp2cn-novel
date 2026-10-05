@@ -10,8 +10,9 @@ skill 场景下，脚本位于 skill 目录、小说位于用户工作目录，�
 
     ROOT = 源文档所在目录
 
-中间产物（parts/ output/ work/ manifest.json state.json）与最终产物
-（<原名>.zh.txt / <原名>.zh.md）全部落在 ROOT 下。
+中间产物全部收进 ROOT/.translate/（parts/ parts_out/ work/ archive/ incoming/
+manifest.json state.json），最终产物是 ROOT/<原名>_translate.txt（与源文档同一级）。
+二者分离：.translate/ 是可恢复的工作状态，_translate.txt 是交付物。
 
 源文档定位优先级
 ----------------
@@ -23,7 +24,7 @@ skill 场景下，脚本位于 skill 目录、小说位于用户工作目录，�
 
 用法（各脚本内）
 ----------------
-    from _paths import ROOT, SOURCE, OUT_TXT_NAME, OUT_MD_NAME
+    from _paths import ROOT, SOURCE, OUT_TXT_NAME
 """
 
 from __future__ import annotations
@@ -84,19 +85,32 @@ def resolve(argv: list[str] | None = None, cwd: Path | None = None) -> tuple[Pat
     )
 
 
-def output_names(source: Path) -> tuple[str, str]:
-    """源 `断锁.txt` -> ('断锁.zh.txt', '断锁.zh.md')"""
-    stem = source.stem
-    if stem.endswith(".zh"):          # 避免重复后缀
-        stem = stem[: -len(".zh")]
-    return f"{stem}.zh.txt", f"{stem}.zh.md"
+def translate_name(source: Path) -> str:
+    """源 `X.txt` -> `X_translate.txt`（与源文档同一级）"""
+    return f"{source.stem}_translate.txt"
 
 
 ROOT, SOURCE = resolve()
-OUT_TXT_NAME, OUT_MD_NAME = output_names(SOURCE)
+ORIGINAL_PATH = SOURCE
+
+# ---- Translation Workspace（中间产物，全部收进 .translate/）----
+TRANSLATE_DIR = ROOT / ".translate"
+PARTS_DIRNAME = ".translate/parts"          # 写入 manifest.parts[].file，相对 ROOT 解析
+PARTS_DIR = TRANSLATE_DIR / "parts"
+WORK_DIR = TRANSLATE_DIR / "work"
+ARCHIVE_DIR = TRANSLATE_DIR / "archive"
+INCOMING_DIR = TRANSLATE_DIR / "incoming"
+PARTS_OUT_DIR = TRANSLATE_DIR / "parts_out"  # 逐 part 译文（仍是中间产物）
+MANIFEST_PATH = TRANSLATE_DIR / "manifest.json"
+STATE_PATH = TRANSLATE_DIR / "state.json"
+
+# ---- 最终交付物：与源文档同一级 ----
+OUT_TXT_NAME = translate_name(SOURCE)
+OUT_TXT_PATH = ROOT / OUT_TXT_NAME
 
 
 if __name__ == "__main__":
-    print(f"ROOT   = {ROOT}")
-    print(f"SOURCE = {SOURCE}")
-    print(f"OUT    = {OUT_TXT_NAME} / {OUT_MD_NAME}")
+    print(f"ROOT       = {ROOT}")
+    print(f"SOURCE     = {SOURCE}")
+    print(f"WORKSPACE  = {TRANSLATE_DIR}")
+    print(f"OUTPUT     = {OUT_TXT_PATH}")

@@ -5,7 +5,7 @@ run_agent.py —— 单 part 原子翻译流程
 
     state → manifest → 唯一指定 part → 输入 hash 校验 → 按需上下文
           → prompt → LLM → 净化 → 异常检测 → 逐段结构校验
-          → 原子写 output/part_XXX.txt → 更新 state → 推进下一个 part
+          → 原子写 .translate/parts_out/part_XXX.txt → 更新 state → 推进下一个 part
 
 程序负责：顺序、hash、完整性、状态、写盘、恢复、推进。
 LLM 只负责：把给定的 part_text 完整译成中文。LLM 不得判断下一 part、
@@ -22,7 +22,7 @@ LLM 只负责：把给定的 part_text 完整译成中文。LLM 不得判断下�
     # 3) 从 stdin 接收译文
     cat reply.txt | python scripts/run_agent.py --from-stdin
 
-    # 4) 提交已写入 output/part_XXX.txt 的译文（校验 + 原子写 + 更新 state）
+    # 4) 提交已写入 .translate/parts_out/part_XXX.txt 的译文（校验 + 原子写 + 更新 state）
     python scripts/run_agent.py --part part_001 --commit
 
 单 part 推进；不传 --part 时严格取 manifest 顺序中的第一个非 DONE。
@@ -45,14 +45,16 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
-from _paths import ROOT, SOURCE  # noqa: E402  ROOT 由源文档位置推导
-
-MANIFEST_PATH = ROOT / "manifest.json"
-STATE_PATH = ROOT / "state.json"
-ORIGINAL_PATH = SOURCE
-OUTPUT_DIR = ROOT / "output"
-INCOMING_DIR = OUTPUT_DIR / ".incoming"
-WORK_DIR = ROOT / "work"
+from _paths import (  # noqa: E402  ROOT 由源文档位置推导
+    ROOT,
+    SOURCE,
+    ORIGINAL_PATH,
+    MANIFEST_PATH,
+    STATE_PATH,
+    PARTS_OUT_DIR,
+    INCOMING_DIR,
+    WORK_DIR,
+)
 
 def _env_int(name: str, default: int) -> int:
     v = os.environ.get(name, "")
@@ -192,7 +194,7 @@ def recompute_counters(state: dict) -> None:
 
 
 def ensure_dirs() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PARTS_OUT_DIR.mkdir(parents=True, exist_ok=True)
     INCOMING_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -351,7 +353,7 @@ def build_context_block(manifest: dict, prec: dict, part_id: str) -> tuple[str, 
     chunks = []
     if idx > 0:
         prev = order[idx - 1]
-        prev_out = OUTPUT_DIR / f"{prev}.txt"
+        prev_out = PARTS_OUT_DIR / f"{prev}.txt"
         if prev_out.exists():
             tail = read_text(prev_out)[-PREV_TRANS_TAIL:]
             chunks.append(
@@ -492,7 +494,7 @@ def commit(manifest: dict, state: dict, prec: dict, part_path: Path,
         f.flush()
         os.fsync(f.fileno())
     disk_sha = sha256_bytes(staging.read_bytes())
-    final = OUTPUT_DIR / f"{pid}.txt"
+    final = PARTS_OUT_DIR / f"{pid}.txt"
     os.replace(staging, final)
 
     sp["status"] = "DONE"
@@ -527,7 +529,7 @@ def main() -> int:
     ap.add_argument("--part", help="指定 part_id（默认取第一个非 DONE）")
     ap.add_argument("--print-prompt", action="store_true", help="打印组装好的 prompt 后退出")
     ap.add_argument("--from-stdin", action="store_true", help="从 stdin 读取译文")
-    ap.add_argument("--commit", action="store_true", help="提交已有的 output/part_XXX.txt")
+    ap.add_argument("--commit", action="store_true", help="提交已有的 .translate/parts_out/part_XXX.txt")
     ap.add_argument("--max-tokens", type=int, default=0)
     args = ap.parse_args()
 
@@ -542,7 +544,7 @@ def main() -> int:
     if args.commit:
         prec = select_part(manifest, state, args.part)
         bump_attempts(state, prec["part_id"])
-        opath = OUTPUT_DIR / f"{prec['part_id']}.txt"
+        opath = PARTS_OUT_DIR / f"{prec['part_id']}.txt"
         if not opath.exists():
             sys.exit(f"FATAL: 找不到待提交译文 {opath}")
         raw = read_text(opath)
