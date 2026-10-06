@@ -2,7 +2,6 @@
 .translate/
 
 # 最终译文：属于使用者，不入仓
-*_translate.txt
 
 # 小说正文：受版权保护，不得入仓
 *.txt

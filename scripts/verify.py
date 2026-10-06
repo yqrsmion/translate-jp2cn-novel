@@ -19,7 +19,8 @@ V7  硬上限：任一 part > 20000 FAIL；> 15000 WARN；< 2000 WARN（碎片�
 V8  段落元数据：逐 part 重算 units 与 manifest.paragraphs 逐条一致
 V9  output 存在性 / 与 state 记录的 output_sha256 一致
 V10 段落级逐段校验（数量/顺序/空译/异常压缩/重复）
-V11 禁用标记：围栏、编号、说明性语句、省略标记、日语残留率
+V11 禁用标记（与语言无关）：围栏、编号、说明性语句、省略标记
+    + 源语言残留检测（按 source_lang 注册检测器；未配置 / 未注册则跳过）
 V12 特殊行（＊/标题/时间戳/单行对白）必须非空译文
 
 退出码： 0 = PASS  1 = WARN（需人工复核后才可 merge）  2 = FAIL（阻断）
@@ -56,6 +57,10 @@ from _paths import (  # noqa: E402
     STATE_PATH,
     PARTS_OUT_DIR,
 )
+from _lang import (  # noqa: E402  语言配置（不重新实现语言解析）
+    norm_lang,
+    source_code,
+)
 
 HARD_MAX = 20000
 TARGET_MAX = 15000
@@ -65,12 +70,12 @@ PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 _SEVERITY = {PASS: 0, WARN: 1, FAIL: 2}
 
 DEFAULT_BANDS = {
-    # 日→中天然压缩，初版兜底区间；part_001 试译后应用 --calibrate 校准
+    # 不同语言对的压缩比差异很大，以下是初版兜底区间；part_001 试译后应用 --calibrate 校准
     "unit_warn_low": 0.45,
     "unit_warn_high": 1.80,
     "unit_fail_low": 0.30,
     "unit_fail_high": 2.50,
-    "part_warn_low": 0.60,   # AGENTS.md 第二十二条要求的整 part 告警线
+    "part_warn_low": 0.60,   # translation-guide.md「单 part 原子翻译」要求的整 part 告警线
     "part_warn_high": 2.50,
 }
 
@@ -81,7 +86,6 @@ FORBIDDEN_PATTERNS = [
     (r"\[p\d{3}\]", "段落编号"),
     (r"\[part_?\d+\]", "part 编号"),
     (r"^(以下是|下面是)?\s*(译文|翻译)[:：]", "说明性语句"),
-    (r"翻译完成|已翻译|翻訳完了|以上が翻訳", "完成声明"),
     (r"（此处省略）|（以下略）|（中略）|\[未翻译\]|\[省略\]", "省略标记"),
     (r"^第\s*\d+\s*部分", "章节编号"),
     (r"^#{1,6}\s", "markdown 标题"),
@@ -89,6 +93,41 @@ FORBIDDEN_PATTERNS = [
 
 KANA_RE = re.compile(r"[\u3040-\u309f\u30a0-\u30ff]")
 NON_TEXT_RE = re.compile(r"^[\s\W_]+$", re.UNICODE)
+
+
+# --------------------------------------------------------------------------
+# V11 源语言残留检测：按源语言注册检测器
+#   未配置语言 / 未注册语言 -> 不检测（不猜测、不套用其它语言的规则）
+#   新增语言只需在此注册一个 detector(out_text) -> list[str]
+# --------------------------------------------------------------------------
+KANA_RESIDUE_MAX = 0.15
+
+
+def detect_ja_residue(out_text: str) -> list[str]:
+    """日文原文：译文里残留假名的比例过高，说明漏译（阈值 0.15）"""
+    total_chars = max(len(re.sub(r"\s", "", out_text)), 1)
+    ratio = len(KANA_RE.findall(out_text)) / total_chars
+    if ratio > KANA_RESIDUE_MAX:
+        return [f"[日语残留率过高] {ratio:.2%}"]
+    return []
+
+
+RESIDUE_DETECTORS = {
+    "ja": detect_ja_residue,
+}
+
+_residue_notice_done = False
+
+
+def residue_detector(lang_key: str):
+    """取源语言对应的残留检测器；不存在则返回 None（并只提示一次）"""
+    global _residue_notice_done
+    detector = RESIDUE_DETECTORS.get(lang_key)
+    if detector is None and not _residue_notice_done:
+        _residue_notice_done = True
+        why = "未配置源语言（NOVEL_SOURCE_LANG）" if not lang_key else f"{lang_key} 无对应检测器"
+        print(f"[INFO] {why}，跳过源语言残留检测", file=sys.stderr)
+    return detector
 
 
 # --------------------------------------------------------------------------
@@ -454,18 +493,19 @@ def verify_part_output(part_rec: dict, part_text: str, out_text: str, bands: dic
     n_src, n_out = len(src_units), len(out_units)
     result["text_units"] = {"source": n_src, "translation": n_out, "delta": n_out - n_src}
 
-    # ---- V11 禁用标记 ----
+    # ---- V11 禁用标记（与语言无关）----
     forb = []
     for pat, desc in FORBIDDEN_PATTERNS:
         for ln in out_units:
             if re.search(pat, ln):
                 forb.append(f"[{desc}] {ln[:40]}")
                 break
-    kana = len(KANA_RE.findall(out_text))
-    total_chars = max(len(re.sub(r"\s", "", out_text)), 1)
-    kana_ratio = kana / total_chars
-    if kana_ratio > 0.15:
-        forb.append(f"[日语残留率过高] {kana_ratio:.2%}")
+
+    # ---- V11 源语言残留检测（按 source_lang 注册；未配置 / 未注册 -> 跳过）----
+    detector = residue_detector(norm_lang(source_code()))
+    if detector is not None:
+        forb.extend(detector(out_text))
+
     if forb:
         add(FAIL, "V11", "；".join(forb[:5]))
         result["checks"]["forbidden"] = FAIL
@@ -580,7 +620,7 @@ def verify_part_output(part_rec: dict, part_text: str, out_text: str, bands: dic
     else:
         result["checks"]["special"] = PASS
 
-    # ---- 整 part 比例（仅告警，AGENTS.md 第二十二条）----
+    # ---- 整 part 比例（仅告警，translation-guide.md「单 part 原子翻译」）----
     src_len = sum(len(s) for s in src_units)
     out_len = sum(len(t) for t in out_units)
     ratio = (out_len / src_len) if src_len else 0.0

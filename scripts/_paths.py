@@ -11,13 +11,14 @@ skill 场景下，脚本位于 skill 目录、小说位于用户工作目录，�
     ROOT = 源文档所在目录
 
 中间产物全部收进 ROOT/.translate/（parts/ parts_out/ work/ archive/ incoming/
-manifest.json state.json），最终产物是 ROOT/<中文书名>.txt（与源文档同一级）。
-中文书名 = 源文件名（日文标题）的中文翻译，由 Agent 在合并时通过
-`merge.py --title "中文书名"` 传入并写入 state.json 的 output.title_cn；
-未取到中文书名时回退为 ROOT/<原名>_中文版.txt。
+manifest.json state.json），最终产物是 ROOT/<目标语言书名>.txt（与源文档同一级）。
+目标语言书名 = 源文件名（原标题）的目标语言翻译，由 Agent 在合并时通过
+`merge.py --title "目标语言书名"` 传入并写入 state.json 的 output.title_cn；
+未取到书名时回退为 ROOT/<原名>_translated.txt。
+
 二者分离：.translate/ 是可恢复的工作状态，最终译文是交付物。
 
-注意：中文书名要到合并阶段才存在，因此「最终产物路径」不能做成模块级常量，
+注意：目标语言书名要到合并阶段才存在，因此「最终产物路径」不能做成模块级常量，
 必须由运行时函数 out_txt_path() 解析（见文件末尾）。
 
 源文档定位优先级
@@ -33,7 +34,7 @@ manifest.json state.json），最终产物是 ROOT/<中文书名>.txt（与源�
     from _paths import ROOT, SOURCE
     from _paths import out_txt_path      # 最终产物路径（需运行时解析）
 
-OUT_TXT_NAME / OUT_TXT_PATH 只是「未取到中文书名」时的回退值，
+OUT_TXT_NAME / OUT_TXT_PATH 只是「未取到书名」时的回退值，
 凡是要落盘或校验最终译文的地方，一律用 out_txt_path()。
 """
 
@@ -98,22 +99,22 @@ def resolve(argv: list[str] | None = None, cwd: Path | None = None) -> tuple[Pat
 
 
 # ---- 最终产物命名 ----
-# 主规则：源 `日文标题.txt` -> `中文书名.txt`（中文书名由 Agent 翻译后经 merge.py --title 传入）
-# 回退规则：源 `X.txt` -> `X_中文版.txt`（未取到中文书名时）
-FALLBACK_SUFFIX = "_中文版"
+# 主规则：源 `原标题.txt` -> `目标语言书名.txt`（书名由 Agent 翻译后经 merge.py --title 传入）
+# 回退规则：源 `X.txt` -> `X_translated.txt`（未取到书名时）
+FALLBACK_SUFFIX = "_translated"
 TITLE_MAX_LEN = 80
 _ILLEGAL_CHARS_RE = re.compile(r'[\\/:*?"<>|\r\n\t]')
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def fallback_name(source: Path) -> str:
-    """源 `X.txt` -> `X_中文版.txt`（未取到中文书名时的回退名）"""
+    """源 `X.txt` -> `X_translated.txt`（未取到书名时的回退名）"""
     return f"{source.stem}{FALLBACK_SUFFIX}.txt"
 
 
 def sanitize_title(raw: str) -> str | None:
     """
-    把中文书名清洗成可安全用作文件名的主干（不含 .txt）。
+    把目标语言书名清洗成可安全用作文件名的主干（不含 .txt）。
 
     清洗步骤：去首尾空白 -> 剥离误带的 .txt 后缀 -> 去控制字符 ->
     非法字符替换为 _ -> 折叠连续空白 -> 去掉结尾的 . 与空格 -> 限长。
@@ -135,7 +136,7 @@ def sanitize_title(raw: str) -> str | None:
 
 def read_title_cn() -> str | None:
     """
-    读 state.json 中已持久化的中文书名（output.title_cn）。
+    读 state.json 中已持久化的目标语言书名（output.title_cn）。
 
     state.json 尚不存在（split / init 之前）或损坏时一律返回 None，
     不抛异常——命名解析不能阻塞切分、初始化、翻译等前置阶段。
@@ -157,8 +158,8 @@ def out_txt_path() -> tuple[Path, str]:
     """
     运行时解析最终译文路径。
 
-    返回 (路径, 来源)：来源为 "title"（用了中文书名）或 "fallback"（回退名）。
-    中文书名与源文档同路径时强制回退——绝不允许产物覆盖源文档。
+    返回 (路径, 来源)：来源为 "title"（用了目标语言书名）或 "fallback"（回退名）。
+    目标语言书名与源文档同路径时强制回退——绝不允许产物覆盖源文档。
     """
     title = read_title_cn()
     if title:
@@ -183,7 +184,7 @@ MANIFEST_PATH = TRANSLATE_DIR / "manifest.json"
 STATE_PATH = TRANSLATE_DIR / "state.json"
 
 # ---- 最终交付物：与源文档同一级 ----
-# 仅作回退值保留（中文书名尚未确定时的默认路径）；
+# 仅作回退值保留（目标语言书名尚未确定时的默认路径）；
 # 需要真实产物路径的脚本请调用 out_txt_path()。
 OUT_TXT_NAME = fallback_name(SOURCE)
 OUT_TXT_PATH = ROOT / OUT_TXT_NAME

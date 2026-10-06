@@ -1,23 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-fix_quotes.py —— 统一引号排版（方案 B：中文规范优先）
+fix_quotes.py —— 标点规范化入口（按语言对选择策略）
 
-规则（逐段依据「原文该处符号的角色」决定译文符号）
---------------------------------------------------
-A. 『』 的处理
-   1. 『』嵌套在「」之内（引用中的引用） -> 中文规范：内层单引号 ‘...’
-   2. 『』为书名 / 作品名                -> 中文规范：书名号 《...》（已正确的不动）
-   3. 『』独立成段（车内广播 / 公告 / 独立引用，全段无「」）
-                                        -> 保留 『...』，以区别于人物对话
-      仅当「整段就是一个 『...』」且译文只有一对 “...” 时才整段转 『』；
-      长叙述段中嵌入的『』保留译文现有处理，避免误改同段并存的对话引号。
+本脚本是**通用入口**，不内置任何"放之四海皆准"的引号规则：
 
-B. 全局：日文直角引号 「」 -> 中文弯引号 “”
-   简体中文不使用「」，一律转 “”。嵌套情形 「…『…』…」 经 A 处理后
-   自然成为 “…‘…’…”。
+    fix_quotes.py
+        ↓
+    读取 NOVEL_SOURCE_LANG / NOVEL_TARGET_LANG（经 _lang.lang_pair 归一）
+        ↓
+    在 HANDLERS 中查找 (源语言, 目标语言)
+        ├── 命中     -> 执行该语言对的标点规范化
+        └── 未命中   -> 安全跳过（NO-OP），不猜测、不回退、不报错
 
-依据：manifest.json 提供「原文段落 <-> 译文行」的 1:1 对齐，逐段精确定位，不靠猜。
+当前内置的语言对：
+    ja → zh-hans（简体中文；含 zh / zh-CN / zh-Hans 写法）
+
+新增语言对只需写一个 handler 并在 HANDLERS 注册，不必改动主流程。
+
+共同机制（与语言无关）
+----------------------
+- 依据 manifest.json 的「原文段落 <-> 译文行」1:1 对齐逐段处理，不靠正则猜
+- dry-run 默认；`--apply` 才写回 .translate/parts_out/ 并刷新 state.json
 
 用法
 ----
@@ -45,6 +49,7 @@ from _paths import (  # noqa: E402
     STATE_PATH,
     PARTS_OUT_DIR,
 )
+from _lang import lang_pair  # noqa: E402  语言对归一（不重新实现语言解析）
 
 L_NIJU, R_NIJU = "\u300e", "\u300f"   # 『 』
 L_KAK, R_KAK = "\u300c", "\u300d"     # 「 」
@@ -70,12 +75,80 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+# --------------------------------------------------------------------------
+# 语言对 handler：ja → zh-hans（简体中文）
+# --------------------------------------------------------------------------
+def fix_ja_zh_hans(src: str, cur: str) -> tuple[str, list[str]]:
+    """
+    日文原文 → 简体中文译文的引号规范化（方案 B：中文规范优先）。
+
+    逐段依据「原文该处符号的角色」决定译文符号：
+    A1 『』嵌套在「」之内（引用中的引用） -> 中文规范：内层单引号 ‘...’
+    A2 『』为书名 / 作品名                -> 书名号 《...》（已正确的不动）
+    A3 『』独立成段（广播 / 公告 / 独立引用，全段无「」）
+                                         -> 保留 『...』，以区别于人物对话
+       仅当「整段就是一个 『...』」且译文只有一对 “...” 时才整段转 『』；
+       长叙述段中嵌入的『』保留译文现有处理，避免误改同段并存的对话引号。
+    B  日文直角引号 「」 -> 中文弯引号 “”
+       简体中文不使用「」，一律转 “”；A 处理后嵌套情形自然成为 “…‘…’…”。
+
+    返回 (处理后的译文行, 标签列表)，标签供主流程统计与取样：
+        has-niju           原文段落含『』（只用于统计，不进样本）
+        nested->''         A1 命中
+        standalone->niju   A3 命中
+        kakko->curly       B 命中
+    """
+    tags: list[str] = []
+
+    # ---------- A. 『』 规则 ----------
+    if L_NIJU in src:
+        tags.append("has-niju")
+        if L_KAK in src:
+            # 1) 嵌套引用 -> 中文内层单引号
+            if L_NIJU in cur:
+                cur = cur.replace(L_NIJU, L_SIN).replace(R_NIJU, R_SIN)
+                tags.append("nested->''")
+        else:
+            # 2)(3) 独立引用
+            if not (L_NIJU in cur or L_BOOK in cur or L_SIN in cur):
+                m = re.search(L_NIJU + r"(.*?)" + R_NIJU, src, re.S)
+                span = m.group(1).strip() if m else ""
+                if len(span) >= 0.8 * max(len(src.strip()), 1) and cur.count(L_CUR) == 1:
+                    cur = cur.replace(L_CUR, L_NIJU)
+                    cur = cur.replace(R_CUR, R_NIJU)
+                    tags.append("standalone->niju")
+
+    # ---------- B. 「」 -> “” ----------
+    if L_KAK in cur or R_KAK in cur:
+        cur = cur.replace(L_KAK, L_CUR).replace(R_KAK, R_CUR)
+        tags.append("kakko->curly")
+
+    return cur, tags
+
+
+# 语言对 -> 处理器。新增语言对只需在此注册，主流程无需改动。
+HANDLERS = {
+    ("ja", "zh-hans"): fix_ja_zh_hans,
+}
+
+
 def main() -> int:
     setup_io()
-    ap = argparse.ArgumentParser(description="统一引号排版（中文规范优先）")
+    ap = argparse.ArgumentParser(description="标点规范化（按语言对选择策略；未注册语言对跳过）")
     ap.add_argument("--source", metavar="PATH", help="源文档路径（默认按 _paths.py 优先级定位）")
     ap.add_argument("--apply", action="store_true", help="写回文件（默认 dry-run）")
     args = ap.parse_args()
+
+    # ---- 语言对分派：未配置 / 未注册 -> 安全跳过，绝不猜测、不回退 ----
+    src_lang, tgt_lang = lang_pair()
+    if not src_lang or not tgt_lang:
+        print("未配置源/目标语言（NOVEL_SOURCE_LANG / NOVEL_TARGET_LANG），跳过标点规范化")
+        return 0
+    handler = HANDLERS.get((src_lang, tgt_lang))
+    if handler is None:
+        print(f"未配置标点规范化策略：{src_lang} → {tgt_lang}，跳过")
+        return 0
+    print(f"标点规范化策略：{src_lang} → {tgt_lang}")
 
     mf = json.loads(read_text(MANIFEST_PATH))
     orig = read_text(ORIGINAL_PATH)
@@ -100,33 +173,21 @@ def main() -> int:
         for k, para in zip(idxs, paras):
             src = orig[para["abs_start_char"]:para["abs_end_char"]]
             tr = lines[k]
-            cur = tr
+            cur, tags = handler(src, tr)
 
-            # ---------- A. 『』 规则 ----------
-            if L_NIJU in src:
-                n_total += 1
-                if L_KAK in src:
-                    # 1) 嵌套引用 -> 中文内层单引号
-                    if L_NIJU in cur:
-                        cur = cur.replace(L_NIJU, L_SIN).replace(R_NIJU, R_SIN)
-                        n_nested += 1
-                        samples.append(("nested->''", tr[:50], cur[:50]))
-                else:
-                    # 2)(3) 独立引用
-                    if not (L_NIJU in cur or L_BOOK in cur or L_SIN in cur):
-                        m = re.search(L_NIJU + r"(.*?)" + R_NIJU, src, re.S)
-                        span = m.group(1).strip() if m else ""
-                        if len(span) >= 0.8 * max(len(src.strip()), 1) and cur.count(L_CUR) == 1:
-                            cur = cur.replace(L_CUR, L_NIJU).replace(R_CUR, R_NIJU)
-                            n_standalone += 1
-                            samples.append(("standalone->niju", tr[:50], cur[:50]))
-
-            # ---------- B. 「」 -> “” ----------
-            if L_KAK in cur or R_KAK in cur:
-                cur = cur.replace(L_KAK, L_CUR).replace(R_KAK, R_CUR)
-                n_kakko += 1
-                if len(samples) < 10:
-                    samples.append(("kakko->curly", tr[:50], cur[:50]))
+            for tag in tags:
+                if tag == "has-niju":
+                    n_total += 1
+                    continue
+                if tag == "nested->''":
+                    n_nested += 1
+                elif tag == "standalone->niju":
+                    n_standalone += 1
+                elif tag == "kakko->curly":
+                    n_kakko += 1
+                    if len(samples) >= 10:      # 与改造前一致：B 的样本最多 10 条
+                        continue
+                samples.append((tag, tr[:50], cur[:50]))
 
             lines[k] = cur
 

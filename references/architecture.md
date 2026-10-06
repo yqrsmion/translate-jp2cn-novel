@@ -1,7 +1,7 @@
 # 系统设计说明
 
 > **本文回答**：这个系统内部到底是怎么工作的。
-> **本文不回答**：Agent 该怎么操作（→ [`../SKILL.md`](../SKILL.md)）、翻译的行为准则（→ [`../AGENTS.md`](../AGENTS.md)）。
+> **本文不回答**：Agent 该怎么操作（→ [`../SKILL.md`](../SKILL.md)）、翻译的行为准则（→ [`translation-guide.md`](translation-guide.md)）。
 
 ## 一、为什么需要脚本
 
@@ -21,16 +21,17 @@
 ```text
 Skill 本体（可复用）              Translation Workspace（属于某一本小说）
 ─────────────────────            ────────────────────────────────────
-SKILL.md / AGENTS.md             ROOT/.translate/          中间产物
-README.md / LICENSE              ROOT/<中文书名>.txt        最终交付物
-references/ / scripts/           ROOT/<原名>_中文版.txt     回退产物
+SKILL.md / README.md             ROOT/.translate/          中间产物
+references/ / scripts/           ROOT/<目标语言书名>.txt    最终交付物
+                                 ROOT/<原名>_translated.txt 回退产物
 
 `ROOT` = **源文档所在目录**（由 `scripts/_paths.py` 推导，不是脚本所在目录）。
 所有路径常量集中在 `_paths.py`，各脚本不再各自拼接路径。
 
-**最终产物路径必须运行时解析**：中文书名要到 Merge 阶段才由 `merge.py --title`
+**最终产物路径必须运行时解析**：目标语言书名要到 Merge 阶段才由 `merge.py --title`
 写入 `state.json` 的 `output.title_cn`，因此 `_paths.py` 用 `out_txt_path()`
 动态解析，模块级的 `OUT_TXT_NAME / OUT_TXT_PATH` 只保留回退值。
+```
 
 ## 三、数据流
 
@@ -44,13 +45,15 @@ references/ / scripts/           ROOT/<原名>_中文版.txt     回退产物
    ↓  （模型产出译文）
    ↓  run_agent.py --commit → verify.py V9–V12 → 原子落盘 + 状态推进
 .translate/parts_out/part_XXX.txt
-   ↓  fix_quotes.py（可选）  写回 .translate/parts_out/ 并刷新 sha256
-   ↓  merge.py          按 manifest 确定性重建（--title 指定中文书名）
-<中文书名>.txt           未提供中文书名时 -> <原名>_中文版.txt
+   ↓  fix_quotes.py（可选，按语言对）  写回 .translate/parts_out/ 并刷新 sha256
+   ↓  merge.py          按 manifest 确定性重建（--title 指定目标语言书名）
+<目标语言书名>.txt           未提供书名时 -> <原名>_translated.txt
 ```
 
 > `fix_quotes.py` **必须在 `merge.py` 之前**。它只改 `.translate/parts_out/` 与 `state.json`，
 > 合并之后再跑，最终译文不会更新且不报错。
+> 注意：它是按语言对分派的通用入口，内置策略为 `ja → zh-hans`；
+> 未注册语言对（如 `en → zh-hans`）安全跳过，详见 `references/punctuation.md`。
 
 ## 四、核心组件
 
@@ -62,7 +65,7 @@ references/ / scripts/           ROOT/<原名>_中文版.txt     回退产物
 | `run_agent.py` | 单 part 原子翻译：组装 prompt / 调 LLM / 暂存 / 校验 / 置状态 |
 | `verify.py` | V1–V12 结构与完整性校验 |
 | `merge.py` | 按 manifest 确定性重建译文 |
-| `fix_quotes.py` | 日译中标点规范化（dry-run 默认，`--apply` 写回） |
+| `fix_quotes.py` | 标点规范化（dry-run 默认，`--apply` 写回；内置日→中映射） |
 
 ## 五、两份 JSON 契约
 
@@ -121,7 +124,7 @@ unlock：只清 claim，不改 status、不动 archive/
 | | V8 | 逐 part 重算 units 与 `manifest.paragraphs` 逐条比对 |
 | **译文（逐 part）** | V9 | 译文存在、`output_sha256` 与 state 一致 |
 | | V10 | **A** 数量 / **B** 顺序 / **C** 空译 / **D** 压缩率 / **E** 重复 |
-| | V11 | 禁用标记：代码围栏、编号、说明性语句、省略标记、日语残留率 |
+| | V11 | 禁用标记：代码围栏、编号、说明性语句、省略标记、源语言残留率 |
 | | V12 | 短行或纯符号行（`len<=3` 或匹配非文本正则）必须有非空译文 |
 
 **压缩率的两级判定**：
@@ -163,5 +166,7 @@ unlock：只清 claim，不改 status、不动 archive/
 | 中间态 | 默认保留 | 支持断点恢复、排错、重新校验、重新合并 |
 | 清理方式 | 手动删除 `.translate/` | 不引入额外脚本；删除代价已在文档中写明 |
 | 配置载体 | 环境变量 | 没有引入配置文件，避免"文档说有、代码不读"的假配置层 |
-| 交付物 | 单一 `.txt` | 只产出 `<中文书名>.txt`（回退 `<原名>_中文版.txt`），不做阅读版导出 |
-| 中文书名 | 源文件名译一遍 | 优先 `--title`；无则读 state；都没有且配了 LLM 时脚本自译。译名 == 原名则用回退名 |
+| 语言 | 源→目标可配置 | 源/目标语言由 `NOVEL_SOURCE_LANG` / `NOVEL_TARGET_LANG` 声明，不写死在 Skill 内 |
+| 交付物 | 单一 `.txt` | 只产出 `<目标语言书名>.txt`（回退 `<原名>_translated.txt`），不做阅读版导出 |
+| 目标语言书名 | 源文件名译一遍 | 优先 `--title`；无则读 state；都没有且配了 LLM 时脚本自译。译名 == 原名则用回退名 |
+| 标点 | 按语言对分派 | `fix_quotes.py` 是通用入口，内置 `ja → zh-hans` 策略；未注册语言对安全跳过，新增语言对注册 handler 即可 |

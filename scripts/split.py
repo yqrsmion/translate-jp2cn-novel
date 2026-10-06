@@ -31,7 +31,7 @@ split.py —— 一次性切分【源文档】-> parts/part_XXX.txt + manifest.j
     python scripts/split.py --plan          # 干跑，只打印计划，不写任何文件
     python scripts/split.py                 # 正式切分（只允许运行一次）
 
-AGENTS.md 第十九条：切分脚本仅在项目初始化运行一次；如发现切分错误，
+translation-guide.md「切分规则」：切分脚本仅在项目初始化运行一次；如发现切分错误，
 必须删除整个 parts/ 并重新运行本脚本。因此本脚本在 parts/ 或 manifest.json
 已存在时会拒绝运行。
 """
@@ -551,7 +551,7 @@ def main() -> int:
         if existing:
             print(
                 "FATAL: 已存在 " + " / ".join(existing) + "\n"
-                "AGENTS.md 第十九条：禁止重复/追加切分。\n"
+                "translation-guide.md「切分规则」：禁止重复/追加切分。\n"
                 "若确需重做，请先人工删除 parts/ 与 manifest.json，再重新运行本脚本。",
                 file=sys.stderr,
             )

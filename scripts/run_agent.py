@@ -8,8 +8,11 @@ run_agent.py —— 单 part 原子翻译流程
           → 原子写 .translate/parts_out/part_XXX.txt → 更新 state → 推进下一个 part
 
 程序负责：顺序、hash、完整性、状态、写盘、恢复、推进。
-LLM 只负责：把给定的 part_text 完整译成中文。LLM 不得判断下一 part、
-不得判断是否全书完成、不得输出任何元数据。
+LLM 只负责：把给定的 part_text 完整译为目标语言（NOVEL_TARGET_LANG）。
+LLM 不得判断下一 part、不得判断是否全书完成、不得输出任何元数据。
+
+语言与体裁由环境变量决定：NOVEL_SOURCE_LANG / NOVEL_TARGET_LANG
+（及可选的 *_LANG_NAME 覆盖）、NOVEL_GENRE（详见 _lang.py）。
 
 运行模式
 --------
@@ -55,6 +58,12 @@ from _paths import (  # noqa: E402  ROOT 由源文档位置推导
     INCOMING_DIR,
     WORK_DIR,
 )
+from _lang import (  # noqa: E402  语言 / 体裁配置（不依赖源文档）
+    source_code,
+    source_name,
+    target_name,
+    genre,
+)
 
 def _env_int(name: str, default: int) -> int:
     v = os.environ.get(name, "")
@@ -78,14 +87,39 @@ LLM_TEMPERATURE = _env_float("NOVEL_LLM_TEMPERATURE", 0.2)
 PREV_TRANS_TAIL = _env_int("NOVEL_PREV_TRANS_TAIL", 1200)  # 前一片译文尾部
 PREV_RAW_TAIL = _env_int("NOVEL_PREV_RAW_TAIL", 600)       # 前一片原文尾部
 
-SYSTEM_PROMPT = """你是一名专业的日中推理小说译者。你的任务是把给定的【本 part 日文原文】完整翻译成简体中文。
+# --------------------------------------------------------------------------
+# 提示词：主块（语言无关）+ 按需追加的附加块
+# --------------------------------------------------------------------------
+# 主块只描述「翻译行为契约」，不含任何特定语言的读音 / 排版 / 体裁规则；
+# 那些规则放进下面的附加块，由语言配置与 NOVEL_GENRE 决定是否追加。
+
+SYSTEM_PROMPT_HEAD = """你是一名专业的{src} → {tgt}小说译者。你的任务是把给定的【本 part {src}原文】完整翻译成{tgt}。
 
 ## 总则
 - 忠实于原文：不改变事实、不改变人物关系、不改变语气、不改变信息量。
-- 中文自然通顺，但因追求中文自然而改变原意是被禁止的。
+- {tgt}自然通顺，但因追求{tgt}自然而改变原意是被禁止的。
 - 不总结、不删减、不省略、不擅自补充原文没有的信息。
-- 不猜测犯人、不分析诡计、不把后文信息提前写入前文。
+- 不把后文信息提前写入前文。
 
+## 一致性要求
+- 严格沿用【术语表 / 人物表】中已确定的译名与称呼。
+- 年龄差、上下级、亲疏关系要在{tgt}里体现出来，
+  不同人物的说话方式必须有所区别。
+- 线索、时间关系、地点关系必须忠实，不得为了通顺而调整。
+
+## 输出契约（违反即视为失败）
+1. **只输出译文正文**，不得出现任何解释、总结、翻译说明、进度说明、
+   part 编号、段落编号、Markdown 标记、代码块围栏、标题符号。
+2. **逐行对应**：原文每一行（每个独立段落）对应输出一行{tgt}。
+   行数必须与原文完全一致，顺序完全一致。
+3. 不要把多个原文行合并成一行，也不要把一行拆成多行。
+4. 遇到 ＊、○、── 等场景分隔符或纯符号行，也必须输出对应的一行
+   （可保留该符号，或按{tgt}习惯输出等价的分隔标记），**不得留空、不得省略**。
+5. 输出行数错、出现编号、出现「以下是译文」等元话语，都会被程序判为失败。
+"""
+
+# 附加块：日语振假名（ルビ）—— 源语言为日语时才追加
+RUBY_BLOCK = """
 ## 振假名（ルビ）残留 —— 必须特别注意
 本电子书的振假名在抽取时被内联进了正文，形式为「汉字/词 + 紧跟的假名」，例如：
     繫つながった        -> 读作 つながった
@@ -96,22 +130,20 @@ SYSTEM_PROMPT = """你是一名专业的日中推理小说译者。你的任务�
 2. 只翻译被标注的汉字/词本身，输出一次即可；
 3. 严禁在译文中出现「重复字词」「汉字+同义假名并列」这类噪声；
 4. 若无法确定哪个是正字，保留最自然的日语常见写法并按译文一次输出。
+"""
 
-## 一致性要求
-- 严格沿用【术语表 / 人物表】中已确定的译名与称呼。
-- 敬语、普通体、口语、年龄差、上下级、亲疏关系要在中文里体现出来，
-  不同人物的说话方式必须有所区别。
-- 推理线索、时间关系、地点关系必须忠实，不得为了通顺而调整。
+# 附加块：语体分层（敬语 / 普通体）—— 源语言存在敬语体系时才追加
+KEIGO_BLOCK = """
+## 语体分层
+- 敬语、普通体、口语等语体差异要在{tgt}里体现出来。
+"""
 
-## 输出契约（违反即视为失败）
-1. **只输出译文正文**，不得出现任何解释、总结、翻译说明、进度说明、
-   part 编号、段落编号、Markdown 标记、代码块围栏、标题符号。
-2. **逐行对应**：原文每一行（每个独立段落）对应输出一行中文。
-   行数必须与原文完全一致，顺序完全一致。
-3. 不要把多个原文行合并成一行，也不要把一行拆成多行。
-4. 遇到 ＊、○、── 等场景分隔符或纯符号行，也必须输出对应的一行
-   （可保留该符号，或按中文习惯输出等价的分隔标记），**不得留空、不得省略**。
-5. 输出行数错、出现编号、出现「以下是译文」等元话语，都会被程序判为失败。
+# 附加块：体裁 —— 设置了 NOVEL_GENRE 时才追加
+GENRE_BLOCK = """
+## 体裁：{genre}
+- 遵守{genre}小说的类型惯例。
+- 不提前揭晓后文才公开的信息：例如推理 / 悬疑类的凶手身份与诡计手法，
+  不猜测、不分析、不在译文中补充说明。
 """
 
 USER_TEMPLATE = """{context_block}
@@ -120,10 +152,32 @@ part_id: {part_id}
 chapter_label: {chapter_label}
 原文行数: {line_count}（你的译文必须正好这么多行，一行对一行）
 
-【本 part 日文原文】
+【本 part {src}原文】
 {part_text}
 
 【再次确认】只输出译文正文，行数与上面原文完全一致，不要输出任何其它内容。"""
+
+
+def system_prompt() -> str:
+    """
+    组装系统提示词：主块 + 按需追加的附加块。
+
+    附加块的追加条件（见 _lang.py）：
+      - 源语言为日语（NOVEL_SOURCE_LANG=ja*）      → 振假名（ルビ）条款
+      - 源语言有敬语 / 语体分层（ja* / ko*）        → 语体分层条款
+      - 设置了 NOVEL_GENRE                          → 体裁条款
+    """
+    src, tgt = source_name(), target_name()
+    code = source_code()
+    text = SYSTEM_PROMPT_HEAD.format(src=src, tgt=tgt)
+    if code.startswith("ja"):
+        text += RUBY_BLOCK
+    if code.startswith(("ja", "ko")):
+        text += KEIGO_BLOCK.format(tgt=tgt)
+    g = genre()
+    if g:
+        text += GENRE_BLOCK.format(genre=g)
+    return text
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +318,12 @@ def unclaim(state: dict, pid: str) -> None:
 WORK_PRIORITY = ["characters.md", "terms.md", "locations.md",
                  "relationships.md", "timeline.md", "facts.md"]
 
+# terms.md 表格的常见表头首列（语言无关：这些是表头而非词条，跳过）
+TERM_HEADER_WORDS = {
+    "原文", "原文词", "源语言", "源文", "术语", "词条", "外文", "外语", "日文",
+    "source", "original", "term", "word",
+}
+
 
 def kanji_only(s: str) -> str:
     """
@@ -304,7 +364,7 @@ def load_work_sections() -> list[tuple[str, str, str]]:
 def select_work_context(part_text: str, budget: int = CONTEXT_BUDGET) -> tuple[str, list[str]]:
     sections = load_work_sections()
     haystack = kanji_only(part_text)
-    # 术语表的表格首列（日文原词）也作为检索键
+    # 术语表的表格首列（源语言原词）也作为检索键
     term_rows: list[tuple[str, str]] = []
     for src, heading, body in sections:
         if src != "terms.md":
@@ -312,8 +372,14 @@ def select_work_context(part_text: str, budget: int = CONTEXT_BUDGET) -> tuple[s
         for line in body.split("\n"):
             if line.startswith("|"):
                 cells = [c.strip() for c in line.strip("|").split("|")]
-                if len(cells) >= 2 and cells[0] and cells[0] not in ("日文", "---", ""):
-                    term_rows.append((cells[0], cells[1]))
+                if len(cells) < 2 or not cells[0]:
+                    continue
+                # 跳过表头行与 Markdown 分隔行（表头文案随语言而变，不能写死）
+                if cells[0].lower() in TERM_HEADER_WORDS:
+                    continue
+                if set(cells) <= {"---", ":---", "---:", ":--", "--:"}:
+                    continue
+                term_rows.append((cells[0], cells[1]))
 
     hits: list[tuple[int, str, str, str]] = []
     for src, heading, body in sections:
@@ -338,8 +404,8 @@ def select_work_context(part_text: str, budget: int = CONTEXT_BUDGET) -> tuple[s
     hit_names = [f"{src}::{h}" for _p, src, h, _b in hits]
 
     # 漏检兜底：单独列出本 part 命中的术语词条（即使整节未命中，也保证译名一致）
-    gloss = [f"{jp} → {cn}" for jp, cn in term_rows
-             if jp and (jp in part_text or kanji_only(jp) in haystack)]
+    gloss = [f"{src_term} → {tgt_term}" for src_term, tgt_term in term_rows
+             if src_term and (src_term in part_text or kanji_only(src_term) in haystack)]
     if gloss:
         body = "\n".join(gloss[:40])
         chosen.append(f"[terms.md 命中词条]\n{body}")
@@ -566,6 +632,7 @@ def main() -> int:
         part_id=pid,
         chapter_label=prec.get("chapter_label") or "-",
         line_count=prec["text_unit_count"],
+        src=source_name(),
         part_text=part_text,
     )
 
@@ -576,7 +643,7 @@ def main() -> int:
         return commit(manifest, state, prec, part_path, clean_translation(raw))
 
     if args.print_prompt:
-        print(SYSTEM_PROMPT)
+        print(system_prompt())
         print("\n" + "=" * 72 + "\n")
         print(prompt)
         print(f"\n[INFO] {pid} 待译 {prec['text_unit_count']} 行 / {prec['char_count']} 字符；"
@@ -591,7 +658,7 @@ def main() -> int:
     print(f"[{pid}] 开始翻译：{prec['char_count']} 字符 / {prec['text_unit_count']} 行，"
           f"max_tokens={max_tokens}")
     try:
-        raw, meta = call_llm(SYSTEM_PROMPT, prompt, max_tokens)
+        raw, meta = call_llm(system_prompt(), prompt, max_tokens)
     except Exception as e:
         unclaim(state, pid)
         sp = state["parts"][pid]
