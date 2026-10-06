@@ -142,7 +142,7 @@ python scripts/resume.py --source <your-novel.txt> audit
 | 翻译的行为准则与工程约束 | [`references/translation-guide.md`](references/translation-guide.md) |
 | 系统内部是怎么工作的 | [`references/architecture.md`](references/architecture.md) |
 | `work/` 怎么填 | [`references/knowledge-base.md`](references/knowledge-base.md) |
-| 标点怎么映射（示例：日→中） | [`references/punctuation.md`](references/punctuation.md) |
+| 标点怎么规范化（按语言对） | [`references/punctuation.md`](references/punctuation.md) |
 
 ## 项目结构
 
@@ -155,7 +155,7 @@ translate-novel/
 │   ├── translation-guide.md      翻译执行规范与工程约束
 │   ├── architecture.md           系统设计说明（数据流 / 状态机 / V1–V12 / 已知坑）
 │   ├── knowledge-base.md         work/ 清单与模板
-│   └── punctuation.md            标点映射规范（示例：日→中，按语言对替换）
+│   └── punctuation.md            标点规范化规范（内置策略：日 → 简体中文）
 └── scripts/
     ├── _paths.py                 源文档定位 + 路径常量（共用）
     ├── _lang.py                  语言 / 体裁配置 + prompt 语言名解析（共用）
@@ -172,7 +172,7 @@ translate-novel/
 - **只保证结构完整，不保证语义正确**。V1–V12 能证明"没漏、没乱、没空"，不能证明"没译错"；语义校对仍需人工抽检
 - **串行执行**。为跨片一致性不支持并行，吞吐受限于单链路速度
 - **只产出纯文本**（`<目标语言书名>.txt`，回退时 `<原名>_translated.txt`），不生成阅读版 Markdown
-- 标点映射与语言对相关：内置示例为日→中，其它语言对请参考 [`references/punctuation.md`](references/punctuation.md) 替换映射
+- 标点规范化按语言对分派：内置 `ja → zh-hans` 策略，未注册语言对安全跳过；详见 [`references/punctuation.md`](references/punctuation.md)
 - 本仓库**不包含任何小说正文**。使用者的原文与译文受版权保护，请勿上传
 
 ## 许可

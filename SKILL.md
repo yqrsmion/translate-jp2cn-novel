@@ -128,15 +128,14 @@ python <S>/fix_quotes.py --source <X> --apply
 **必须在 Merge 之前执行**：它只改 `.translate/parts_out/` 与 `state.json` 中的 sha256，
 合并之后再跑，最终译文不会更新且不报错。
 
-> 标点映射与语言对相关：本 Skill 内置的示例映射为日 → 中（见 [`references/punctuation.md`](references/punctuation.md)）。
-> 翻译其它语言对时，请按该文件说明替换对应映射。
+**按语言对分派**：脚本是通用入口，按 `NOVEL_SOURCE_LANG` / `NOVEL_TARGET_LANG`
+选择处理策略（见 [`references/punctuation.md`](references/punctuation.md)）。
 
-**适用范围**：脚本是**条件触发**的——只有「原文段落含 `『`」或「译文含 `「」`」才做替换，
-其余段落原样保留。
-
-- **非 CJK 源（英 / 法等）→ 目标语言**：源端没有 `「」『』`，脚本**空转**、不改动任何内容，
-  符号以模型输出为准，由 prompt 中的标点约定（见 `translation-guide.md`）约束，不依赖脚本兜底
-- **韩语 → 中文**：同属 CJK 会命中规则，但引号习惯与日语不同，可能误映射 → **必须人工复核**后再 `--apply`
+- **已注册语言对**：当前内置 `ja → zh-hans`（`zh` / `zh-CN` / `zh-Hans` 同样命中），
+  按「原文段落含 `『`」或「译文含 `「」`」条件触发逐段处理
+- **未注册语言对 / 未设置语言变量**：**安全跳过**并打印提示，不猜测、不回退、不报错；
+  此时标点以模型输出为准，由 prompt 中的标点约定（见 `translation-guide.md`）约束
+- **扩展**：新增语言对只需在 `fix_quotes.py` 注册一个 handler，无需改主流程
 
 ### 阶段 6：Merge
 

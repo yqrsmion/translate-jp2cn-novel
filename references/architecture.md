@@ -52,7 +52,8 @@ references/ / scripts/           ROOT/<目标语言书名>.txt    最终交付�
 
 > `fix_quotes.py` **必须在 `merge.py` 之前**。它只改 `.translate/parts_out/` 与 `state.json`，
 > 合并之后再跑，最终译文不会更新且不报错。
-> 注意：其内置映射为日 → 中，其它语言对需按 `references/punctuation.md` 替换。
+> 注意：它是按语言对分派的通用入口，内置策略为 `ja → zh-hans`；
+> 未注册语言对（如 `en → zh-hans`）安全跳过，详见 `references/punctuation.md`。
 
 ## 四、核心组件
 
@@ -168,4 +169,4 @@ unlock：只清 claim，不改 status、不动 archive/
 | 语言 | 源→目标可配置 | 源/目标语言由 `NOVEL_SOURCE_LANG` / `NOVEL_TARGET_LANG` 声明，不写死在 Skill 内 |
 | 交付物 | 单一 `.txt` | 只产出 `<目标语言书名>.txt`（回退 `<原名>_translated.txt`），不做阅读版导出 |
 | 目标语言书名 | 源文件名译一遍 | 优先 `--title`；无则读 state；都没有且配了 LLM 时脚本自译。译名 == 原名则用回退名 |
-| 标点 | 按语言对映射 | 内置示例为日→中；其它语言对按 `references/punctuation.md` 替换 `fix_quotes.py` 的映射 |
+| 标点 | 按语言对分派 | `fix_quotes.py` 是通用入口，内置 `ja → zh-hans` 策略；未注册语言对安全跳过，新增语言对注册 handler 即可 |
