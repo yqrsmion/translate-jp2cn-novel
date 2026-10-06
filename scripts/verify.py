@@ -70,7 +70,7 @@ DEFAULT_BANDS = {
     "unit_warn_high": 1.80,
     "unit_fail_low": 0.30,
     "unit_fail_high": 2.50,
-    "part_warn_low": 0.60,   # AGENTS.md 第二十二条要求的整 part 告警线
+    "part_warn_low": 0.60,   # translation-guide.md「单 part 原子翻译」要求的整 part 告警线
     "part_warn_high": 2.50,
 }
 
@@ -580,7 +580,7 @@ def verify_part_output(part_rec: dict, part_text: str, out_text: str, bands: dic
     else:
         result["checks"]["special"] = PASS
 
-    # ---- 整 part 比例（仅告警，AGENTS.md 第二十二条）----
+    # ---- 整 part 比例（仅告警，translation-guide.md「单 part 原子翻译」）----
     src_len = sum(len(s) for s in src_units)
     out_len = sum(len(t) for t in out_units)
     ratio = (out_len / src_len) if src_len else 0.0
