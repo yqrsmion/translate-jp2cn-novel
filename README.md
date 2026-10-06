@@ -53,8 +53,8 @@ python scripts/resume.py --source <your-novel.txt> next
 python scripts/run_agent.py --source <your-novel.txt> --print-prompt
 python scripts/run_agent.py --source <your-novel.txt> --part part_001 --commit
 
-# 4. 合并
-python scripts/merge.py --source <your-novel.txt>          # -> <your-novel>_translate.txt
+# 4. 合并（把源文件名日文标题译成中文书名后传入）
+python scripts/merge.py --source <your-novel.txt> --title "中文书名"   # -> 中文书名.txt
 ```
 
 ## 输入与输出
@@ -62,8 +62,19 @@ python scripts/merge.py --source <your-novel.txt>          # -> <your-novel>_tra
 | | 内容 |
 | --- | --- |
 | **输入** | 一个日文 `.txt` 源文档。按优先级定位：提示词指定 → `--source` → 环境变量 `NOVEL_SOURCE` → 目录下唯一 `*.txt`；多个候选时停止并要求指定 |
-| **最终产物** | `<原名>_translate.txt`，与源文档**同一级目录** |
+| **最终产物** | `<中文书名>.txt`，与源文档**同一级目录**；译名与原名相同时为 `<原名>_中文版.txt` |
 | **中间产物** | `.translate/`（见下） |
+
+**中文书名** = 把源文件名（日文标题）翻译一遍。配了 `NOVEL_LLM_*` 时 `merge.py` 自己译；
+没配就用 `--title "中文书名"` 传入。书名写进 `state.json` 的 `output.title_cn`，
+之后重跑 merge / `--check` 复用同一文件名。
+
+**卷次、作者保留**，只清掉下载站后缀之类的脏数据；书名用**简体中文**：
+
+```text
+源：世界の終りとハードボイルド・ワンダーランド 上 (村上春樹) (z-library.sk, 1lib.sk, z-lib.sk).txt
+产物：世界尽头与冷酷仙境 上 (村上春树).txt
+```
 
 ## 翻译过程中会产生什么工作文件
 
@@ -71,8 +82,8 @@ python scripts/merge.py --source <your-novel.txt>          # -> <your-novel>_tra
 
 ```text
 <小说目录>/
-├── <your-novel>.txt               原文（只读）
-├── <your-novel>_translate.txt     最终译文
+├── <日文标题>.txt                  原文（只读）
+├── <中文标题>.txt                  最终译文（回退时为 <日文标题>_中文版.txt）
 │
 └── .translate/                    可恢复的工作状态
     ├── parts/                     原文分片
@@ -150,7 +161,7 @@ translate-jp2cn-novel/
 
 - **只保证结构完整，不保证语义正确**。V1–V12 能证明"没漏、没乱、没空"，不能证明"没译错"；语义校对仍需人工抽检
 - **串行执行**。为跨片一致性不支持并行，吞吐受限于单链路速度
-- **只产出简体中文纯文本**（`<原名>_translate.txt`），不生成阅读版 Markdown
+- **只产出简体中文纯文本**（`<中文书名>.txt`，回退时 `<原名>_中文版.txt`），不生成阅读版 Markdown
 - 本仓库**不包含任何小说正文**。使用者的原文与译文受版权保护，请勿上传
 
 ## 验证记录

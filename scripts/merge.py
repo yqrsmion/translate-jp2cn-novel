@@ -1,9 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-merge.py —— 全部 part 为 DONE 后，严格按 manifest 顺序合并生成 <原名>.zh.txt
+merge.py —— 全部 part 为 DONE 后，严格按 manifest 顺序合并生成最终译文
 
-输出名以源文档名为准（如源 断锁.txt -> 断锁.zh.txt），由 _paths.py 推导。
+输出命名（路径由 _paths.py 的 out_txt_path() 解析）：
+    源文件名译一遍 -> 译名 != 原名  => `中文书名.txt`
+                      译名 == 原名  => `日文标题_中文版.txt`（回退）
+
+中文书名 = 源文件名（日文标题）的中文翻译。优先 --title；没传就用 state.json 里已存的；
+都没有且配了 NOVEL_LLM_* 时，脚本自己调 LLM 译一遍源文件名。
+书名清洗后写入 state.json 的 output.title_cn，后续重跑 merge / --check 复用同一文件名。
 
 铁律
 ----
@@ -16,6 +22,7 @@ merge.py —— 全部 part 为 DONE 后，严格按 manifest 顺序合并生成
 用法
 ----
     python scripts/merge.py
+    python scripts/merge.py --title "中文书名"   # 指定中文书名（源文件名日文标题的译文）
     python scripts/merge.py --strict        # 存在 needs_human_review 的 part 也拒绝合并
     python scripts/merge.py --check         # 只校验现有最终译文，不重写
 """
@@ -27,6 +34,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # ROOT 由【源文档位置】推导，而非脚本位置（详见 _paths.py）
@@ -37,7 +45,9 @@ from _paths import (  # noqa: E402
     MANIFEST_PATH,
     STATE_PATH,
     PARTS_OUT_DIR,
-    OUT_TXT_PATH,
+    fallback_name,
+    out_txt_path,
+    sanitize_title,
 )
 
 
@@ -147,10 +157,76 @@ def build_translated(manifest: dict) -> tuple[str, dict]:
     return text, stats
 
 
+def save_state(state: dict) -> None:
+    """写回 state.json（与 resume.py 一致的格式：原子写 + updated_at）。"""
+    state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    state["updated_by"] = "merge.py"
+    write_bytes_atomic(
+        STATE_PATH, (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    )
+
+
+TITLE_SYSTEM_PROMPT = (
+    "你是书名译者。把给定的日文小说文件名译成简体中文书名。\n"
+    "规则：输出简体中文书名；保留卷次与作者，只清掉下载站后缀之类的脏数据；"
+    "不要解释、不要引号、不要 .txt 扩展名；无需翻译时原样输出。"
+)
+
+
+def apply_title(state: dict, raw_title: str) -> bool:
+    """
+    把中文书名（--title 传入，或 LLM 译出）清洗后写入 state.json 的 output 块。
+
+    返回 True 表示采用该书名；下列情况返回 False，由调用方走回退命名：
+      - 清洗后为空
+      - 译名与原名相同（翻译后跟原名一样 —— 按规则此时用 <原名>_中文版.txt）
+    """
+    title = sanitize_title(raw_title)
+    if title is None or title == SOURCE.stem:
+        return False
+    state["output"] = {"title_cn": title, "file": f"{title}.txt"}
+    save_state(state)
+    return True
+
+
+def auto_translate_title(state: dict) -> bool:
+    """
+    没传 --title 且 state 里也没有书名时，配了 NOVEL_LLM_* 就让 LLM 把源文件名译一遍。
+
+    失败（未配置 / 调用异常）一律返回 False，静默走回退命名——合并本身不能被书名拖住。
+    """
+    if not (os.environ.get("NOVEL_LLM_BASE_URL") and os.environ.get("NOVEL_LLM_API_KEY")
+            and os.environ.get("NOVEL_LLM_MODEL")):
+        return False
+    try:
+        from run_agent import call_llm
+        raw, _meta = call_llm(TITLE_SYSTEM_PROMPT, SOURCE.stem, 200)
+    except Exception as e:
+        print(f"  书名自动翻译失败（{e}），改用回退命名", file=sys.stderr)
+        return False
+    return apply_title(state, raw)
+
+
+def resolve_check_path() -> tuple[Path, str]:
+    """
+    --check 时定位「现有最终译文」：优先中文书名路径，
+    不存在而回退名存在（旧产物）时改用回退路径。
+    """
+    path, origin = out_txt_path()
+    if origin == "title" and not path.exists():
+        fb = ROOT / fallback_name(SOURCE)
+        if fb.exists():
+            return fb, "fallback"
+    return path, origin
+
+
 def main() -> int:
     setup_io()
     ap = argparse.ArgumentParser(description="合并译文")
     ap.add_argument("--source", metavar="PATH", help="源文档路径（默认按 _paths.py 优先级定位）")
+    ap.add_argument("--title", metavar="中文书名",
+                    help="中文书名（源文件名日文标题的译文）；译名与原名相同时改用回退名。"
+                         "省略则沿用 state.json 中已保存的书名，都没有时脚本自己译一遍源文件名")
     ap.add_argument("--check", action="store_true", help="只校验现有译文，不重写")
     ap.add_argument("--strict", action="store_true", help="存在待复核 part 时拒绝合并")
     args = ap.parse_args()
@@ -160,12 +236,24 @@ def main() -> int:
     manifest = load_json(MANIFEST_PATH)
     state = load_json(STATE_PATH)
 
-    if OUT_TXT_PATH.exists() and args.check:
+    if args.title and not apply_title(state, args.title):
+        # 显式传入的译名不可用（空 / 与原名相同）时以它为准：清掉旧书名，走回退命名
+        if "output" in state:
+            state.pop("output")
+            save_state(state)
+        print("  提示：译名与原名相同或不可用，改用回退命名")
+
+    if args.check:
+        check_path, origin = resolve_check_path()
+        if not check_path.exists():
+            sys.exit(f"FATAL: 找不到最终译文 {check_path}，请先执行合并")
         text, stats = build_translated(manifest)
-        cur = OUT_TXT_PATH.read_bytes()
+        cur = check_path.read_bytes()
         exp = text.encode("utf-8")
         print("=" * 68)
         print(f"check result: {'IDENTICAL' if cur == exp else 'DIFFERENT'}")
+        print(f"  最终译文        : {check_path.name}")
+        print(f"  命名来源        : {origin}")
         print(f"  最终译文 sha256 : {sha256_bytes(cur)}")
         print(f"  expected      sha256 : {sha256_bytes(exp)}")
         print(f"  units={stats['units']} ratio={stats['ratio']} (仅供参考，不代表完整)")
@@ -181,12 +269,20 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
+    # 书名还没定时，配了 LLM 就让脚本自己把源文件名译一遍
+    out_path, origin = out_txt_path()
+    if origin == "fallback" and not args.title and auto_translate_title(state):
+        out_path, origin = out_txt_path()
+
     text, stats = build_translated(manifest)
     data = text.encode("utf-8")
-    write_bytes_atomic(OUT_TXT_PATH, data)
+    write_bytes_atomic(out_path, data)
 
     print("=" * 68)
-    print(f"merged -> {OUT_TXT_PATH}  ({len(data)} bytes)")
+    print(f"merged -> {out_path}  ({len(data)} bytes)")
+    print(f"  命名来源  : {origin}"
+          + ("（中文书名，来自 --title / state.json）" if origin == "title"
+          else "（回退名：译名与原名相同或未提供，可用 --title 指定）"))
     print(f"  units={stats['units']}  source_chars={stats['source_chars']}  "
           f"translated_chars={stats['translated_chars']}")
     print(f"  ratio={stats['ratio']}（仅参考，字符比例不能证明翻译完整）")

@@ -47,7 +47,7 @@ from _paths import (  # noqa: E402  ROOT 由源文档位置推导
     STATE_PATH,
     TRANSLATE_DIR,
     PARTS_OUT_DIR,
-    OUT_TXT_PATH,
+    out_txt_path,
     INCOMING_DIR,
     ARCHIVE_DIR,
     WORK_DIR,
@@ -188,8 +188,9 @@ def stray_files() -> list[str]:
         for f in sorted(PARTS_OUT_DIR.iterdir()):
             if f.is_file() and f.name.endswith(".tmp"):
                 found.append(f"stray tmp: {f.relative_to(ROOT).as_posix()}")
+    out_path, _origin = out_txt_path()
     for probe in (TRANSLATE_DIR / "manifest.json.tmp", TRANSLATE_DIR / "state.json.tmp",
-                  OUT_TXT_PATH.with_suffix(".txt.tmp")):
+                  out_path.with_suffix(".txt.tmp")):
         if probe.exists():
             found.append(f"stray tmp: {probe.name}")
     for pat in ("gap_*", "debug_*", "temp_*", "test_*"):

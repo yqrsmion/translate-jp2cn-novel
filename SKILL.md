@@ -25,10 +25,14 @@ description: "将日文小说完整翻译为简体中文（JP→CN / 日译中�
 | | 内容 |
 | --- | --- |
 | **输入** | 一个日文 `.txt` 源文档（路径不写死，按优先级定位） |
-| **最终产物** | `<原名>_translate.txt`，与源文档**同一级目录** |
+| **最终产物** | `<中文书名>.txt`，与源文档**同一级目录**；未取到中文书名时回退 `<原名>_中文版.txt` |
 | **中间产物** | `<源目录>/.translate/`（parts / parts_out / work / incoming / archive / manifest.json / state.json） |
 
 产物**永远落在源文档所在目录**，Skill 目录不保存任何小说状态。
+
+**中文书名怎么来**：源文件名本身就是日文标题，由你在阶段 6 合并时把它译成中文，
+经 `merge.py --title "中文书名"` 传入（脚本会清洗非法字符后写入 `state.json` 的
+`output.title_cn`，后续重跑 merge / `--check` 复用同一文件名）。
 
 ## 铁律
 
@@ -111,15 +115,31 @@ python <S>/fix_quotes.py --source <X> --apply
 
 ### 阶段 6：Merge
 
-```bash
-python <S>/merge.py --source <X> --check     # 先只校验，不重写
-python <S>/merge.py --source <X> [--strict]
+合并时**把源文件名（日文标题）翻译一遍**：
+
+- 译名与原名不同 → `<中文书名>.txt`
+- 译名与原名相同（比如原名本身已是中文）→ `<原名>_中文版.txt`
+- **卷次、作者保留**，只清掉下载站后缀之类的脏数据；书名用**简体中文**
+
+```text
+源：世界の終りとハードボイルド・ワンダーランド 上 (村上春樹) (z-library.sk, 1lib.sk, z-lib.sk).txt
+                    ↓ 译书名，留卷次与作者，删脏数据
+产物：世界尽头与冷酷仙境 上 (村上春树).txt
 ```
 
-- **输出**：`<原名>_translate.txt`
+配了 `NOVEL_LLM_*` 时脚本会自己译一遍源文件名；没配就把译名用 `--title` 传进来。
+
+```bash
+python <S>/merge.py --source <X> --title "中文书名" --check     # 先只校验，不重写
+python <S>/merge.py --source <X> --title "中文书名" [--strict]
+```
+
+- **输出**：`<中文书名>.txt`；省略 `--title` 且 `state.json` 中没有书名时回退 `<原名>_中文版.txt`
 - **通过条件**：全部 part 为 `DONE`；`--strict` 下不存在 `needs_human_review` 的 part
 - **失败**：有未完成 part → 回到阶段 4；有待复核 part → 人工确认后 `settle`
-- **重复执行**：幂等（`--check` 会报告 IDENTICAL / DIFFERENT）
+- **重复执行**：幂等（`--check` 会报告 IDENTICAL / DIFFERENT）；书名只需首次传入，之后可省略 `--title`
+
+`--title` 传入的译名若与源文档同名，脚本会拒绝（防止产物覆盖原文）。
 
 ---
 

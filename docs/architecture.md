@@ -22,12 +22,15 @@
 Skill 本体（可复用）              Translation Workspace（属于某一本小说）
 ─────────────────────            ────────────────────────────────────
 SKILL.md / AGENTS.md             ROOT/.translate/          中间产物
-README.md / LICENSE              ROOT/<原名>_translate.txt 最终交付物
-references/ / scripts/
-```
+README.md / LICENSE              ROOT/<中文书名>.txt        最终交付物
+references/ / scripts/           ROOT/<原名>_中文版.txt     回退产物
 
 `ROOT` = **源文档所在目录**（由 `scripts/_paths.py` 推导，不是脚本所在目录）。
 所有路径常量集中在 `_paths.py`，各脚本不再各自拼接路径。
+
+**最终产物路径必须运行时解析**：中文书名要到 Merge 阶段才由 `merge.py --title`
+写入 `state.json` 的 `output.title_cn`，因此 `_paths.py` 用 `out_txt_path()`
+动态解析，模块级的 `OUT_TXT_NAME / OUT_TXT_PATH` 只保留回退值。
 
 ## 三、数据流
 
@@ -42,8 +45,8 @@ references/ / scripts/
    ↓  run_agent.py --commit → verify.py V9–V12 → 原子落盘 + 状态推进
 .translate/parts_out/part_XXX.txt
    ↓  fix_quotes.py（可选）  写回 .translate/parts_out/ 并刷新 sha256
-   ↓  merge.py          按 manifest 确定性重建
-<原名>_translate.txt
+   ↓  merge.py          按 manifest 确定性重建（--title 指定中文书名）
+<中文书名>.txt           未提供中文书名时 -> <原名>_中文版.txt
 ```
 
 > `fix_quotes.py` **必须在 `merge.py` 之前**。它只改 `.translate/parts_out/` 与 `state.json`，
@@ -80,7 +83,7 @@ references/ / scripts/
 
 | 块 | 关键字段 |
 | --- | --- |
-| 顶层 | `schema`、`schema_version`、`source_sha256`、`manifest_sha256`、`part_count`、**`current_part_id`**、`counters`、`runtime`、`history[]` |
+| 顶层 | `schema`、`schema_version`、`source_sha256`、`manifest_sha256`、`part_count`、**`current_part_id`**、`counters`、`runtime`、`history[]`、**`output`**（`title_cn` / `file`，由 `merge.py --title` 写入，决定最终产物文件名） |
 | `parts{pid}` | `status`、`attempts`、`started_at`/`finished_at`、`input_sha256`、`output_file`、`output_sha256`、`output_char_count`、`text_units`、`ratio`、`verify`、`needs_human_review`、`claim{token,pid,heartbeat}`、`notes` |
 
 `source_sha256` + `manifest_sha256` 把状态**绑定到具体的一次切分**；换书或重切分后旧状态失效。
@@ -160,4 +163,5 @@ unlock：只清 claim，不改 status、不动 archive/
 | 中间态 | 默认保留 | 支持断点恢复、排错、重新校验、重新合并 |
 | 清理方式 | 手动删除 `.translate/` | 不引入额外脚本；删除代价已在文档中写明 |
 | 配置载体 | 环境变量 | 没有引入配置文件，避免"文档说有、代码不读"的假配置层 |
-| 交付物 | 单一 `.txt` | 只产出 `<原名>_translate.txt`，不做阅读版导出 |
+| 交付物 | 单一 `.txt` | 只产出 `<中文书名>.txt`（回退 `<原名>_中文版.txt`），不做阅读版导出 |
+| 中文书名 | 源文件名译一遍 | 优先 `--title`；无则读 state；都没有且配了 LLM 时脚本自译。译名 == 原名则用回退名 |
