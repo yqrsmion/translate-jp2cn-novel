@@ -52,7 +52,7 @@ references/ / scripts/           ROOT/<目标语言书名>.txt    最终交付�
 
 > `fix_quotes.py` **必须在 `merge.py` 之前**。它只改 `.translate/parts_out/` 与 `state.json`，
 > 合并之后再跑，最终译文不会更新且不报错。
-> 注意：其内置映射为日 → 中，其它语言对需按 [`references/punctuation.md`](punctuation.md) 替换。
+> 注意：其内置映射为日 → 中，其它语言对需按 `references/punctuation.md` 替换。
 
 ## 四、核心组件
 

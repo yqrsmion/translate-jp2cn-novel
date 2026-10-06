@@ -28,8 +28,14 @@ description: "将小说从源语言完整翻译为目标语言（通用小说翻
 | --- | --- | --- |
 | `NOVEL_SOURCE_LANG` | — | 源语言，如 `ja` / `en` / `fr` |
 | `NOVEL_TARGET_LANG` | — | 目标语言，如 `zh` / `en` |
+| `NOVEL_SOURCE_LANG_NAME` / `NOVEL_TARGET_LANG_NAME` | — | 可选；语言的**自然名**，覆盖内置代码映射（如 `NOVEL_TARGET_LANG_NAME=简体中文`） |
+| `NOVEL_GENRE` | — | 可选；体裁（如 `推理` / `悬疑`）。设置后翻译 prompt 追加体裁条款 |
 
-未设置时，由 Agent 在译前与用户确认或根据原文推断，并在 `work/` 中记录。
+未设置语言时，由 Agent 在译前与用户确认或根据原文推断，并在 `work/` 中记录。
+
+翻译 prompt 由这些变量动态拼装：主块只含语言无关的翻译契约；
+源语言为日语时自动追加振假名（ルビ）条款，设置了 `NOVEL_GENRE` 时追加体裁条款。
+未收录的语言代码会原样填入 prompt 并在 stderr 提示可用 `*_LANG_NAME` 指定。
 
 ## 输入与输出
 
@@ -204,6 +210,8 @@ python <S>/resume.py --source <X> status
 | `NOVEL_SOURCE` | — | 源文档路径 |
 | `NOVEL_SOURCE_LANG` | — | 源语言（如 `ja`/`en`/`fr`），供 Agent / LLM 确定翻译方向 |
 | `NOVEL_TARGET_LANG` | — | 目标语言（如 `zh`/`en`），供 Agent / LLM 确定翻译方向 |
+| `NOVEL_SOURCE_LANG_NAME` / `NOVEL_TARGET_LANG_NAME` | — | 语言自然名，覆盖内置代码→名称映射（见「语言配置」） |
+| `NOVEL_GENRE` | — | 体裁（如 `推理`）；设置后 prompt 追加体裁条款 |
 | `NOVEL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — | LLM 接口；不配则用 `--print-prompt` 自行翻译 |
 | `NOVEL_LLM_TEMPERATURE` | 0.2 | 采样温度 |
 | `NOVEL_CONTEXT_BUDGET` | 8000 | `work/` 注入上下文上限（字符） |

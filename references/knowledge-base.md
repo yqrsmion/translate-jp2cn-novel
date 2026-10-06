@@ -1,7 +1,5 @@
 # 翻译辅助上下文（`work/`）—— 文件清单与记录模板
 
-> **本文不回答**：能不能写、冲突怎么处理（→ [`translation-guide.md`](translation-guide.md)）。
-
 `work/` 位于 `.translate/work/`，是跨 part 的翻译辅助上下文。
 它不是给用户读的小说正文，也不是独立的知识库系统，
 唯一作用是让第 100 个 part 的译法和第 1 个 part 保持一致。

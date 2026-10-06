@@ -2,9 +2,7 @@
 
 本文件是 `translate-novel` 的**翻译行为准则与工程约束**，供执行翻译的 Agent 参考。
 
-- 执行步骤与命令：见 [`SKILL.md`](../SKILL.md)
-- 系统内部实现（数据流 / 状态机 / 校验）：见 [`architecture.md`](architecture.md)
-- `work/` 文件清单与模板：见 [`knowledge-base.md`](knowledge-base.md)
+- 执行步骤与命令：见 `SKILL.md`（本文件由它引用，不再向下引用其它 reference）
 
 ---
 
@@ -211,7 +209,7 @@ ROOT/
 人物、术语、地点、事件及其他已确认的信息。
 
 - 只保存与翻译质量直接相关的信息
-- 文件清单与记录模板见 [`knowledge-base.md`](knowledge-base.md)
+- 文件清单与记录模板见 `knowledge-base.md`（由 `SKILL.md` 引用）
 
 ## 19. 人物信息
 

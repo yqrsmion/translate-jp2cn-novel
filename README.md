@@ -35,8 +35,11 @@
 | --- | --- | --- |
 | `NOVEL_SOURCE_LANG` | — | 源语言，如 `ja` / `en` / `fr` |
 | `NOVEL_TARGET_LANG` | — | 目标语言，如 `zh` / `en` |
+| `NOVEL_SOURCE_LANG_NAME` / `NOVEL_TARGET_LANG_NAME` | — | 可选；语言自然名，覆盖内置代码映射（如 `NOVEL_TARGET_LANG_NAME=简体中文`） |
+| `NOVEL_GENRE` | — | 可选；体裁（如 `推理`）；设置后 prompt 追加体裁条款 |
 
 未设置时由 Agent 在译前确认或根据原文推断。
+未收录的语言代码会原样填入 prompt 并提示可用 `*_LANG_NAME` 指定。
 
 ## 安装
 
@@ -155,6 +158,7 @@ translate-novel/
 │   └── punctuation.md            标点映射规范（示例：日→中，按语言对替换）
 └── scripts/
     ├── _paths.py                 源文档定位 + 路径常量（共用）
+    ├── _lang.py                  语言 / 体裁配置 + prompt 语言名解析（共用）
     ├── split.py                  边界感知切分 + manifest
     ├── resume.py                 状态机 / 审计 / 崩溃恢复
     ├── run_agent.py              单片原子翻译
